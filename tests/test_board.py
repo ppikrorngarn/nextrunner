@@ -1,10 +1,24 @@
 """Tests for nextrunner. Run: python3 -m unittest -v   (from the repo root, with src on the path: PYTHONPATH=src, or uv run)"""
+import multiprocessing
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 from nextrunner import board, db
+
+RACERS, ROUNDS = 3, 1000
+
+
+def racer(db_path, name, ids, barrier, results):
+    conn = db.connect(db_path)
+    won, slowest = 0, 0.0
+    for task_id in ids:
+        barrier.wait()  # all racers go for the same task at the same moment
+        t = time.perf_counter()
+        won += bool(board.claim(conn, task_id, name))
+        slowest = max(slowest, time.perf_counter() - t)
+    results.put((name, won, slowest))
 
 
 class Base(unittest.TestCase):
@@ -67,3 +81,22 @@ class BoardTest(Base):
         self.assertFalse(board.release(self.conn, t, "beta"))
         self.assertTrue(board.release(self.conn, t, "alpha", "need a human"))
         self.assertEqual(self.status(t), "ready")
+
+    def test_race_has_exactly_one_winner_per_task(self):
+        ids = [board.add(self.conn, f"race {i}") for i in range(ROUNDS)]
+        ctx = multiprocessing.get_context("spawn")
+        barrier, results = ctx.Barrier(RACERS), ctx.Queue()
+        procs = [ctx.Process(target=racer, args=(self.db_path, f"agent{n}", ids, barrier, results)) for n in range(RACERS)]
+        started = time.perf_counter()
+        for proc in procs:
+            proc.start()
+        scores = [results.get(timeout=120) for _ in procs]
+        for proc in procs:
+            proc.join()
+        elapsed = time.perf_counter() - started
+        holders = [r["claimed_by"] for r in self.conn.execute("SELECT claimed_by FROM tasks")]
+        self.assertEqual(sum(won for _, won, _ in scores), ROUNDS)  # no task was won twice
+        self.assertTrue(all(holders))                                # and none was left unclaimed
+        print(f"\n  race: {ROUNDS} tasks x {RACERS} racers in {elapsed:.2f}s; "
+              f"wins {dict((n, w) for n, w, _ in scores)}; slowest single claim {max(s for *_, s in scores) * 1000:.1f} ms")
+
