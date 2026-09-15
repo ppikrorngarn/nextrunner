@@ -52,12 +52,16 @@ def main(argv=None):
     sp.add_argument("--ttl", type=float, default=900)
     sp = cmd("note", "leave a checkpoint or comment", task=True, who=True)
     sp.add_argument("text")
+    token_help = "the token from claim or next: act only if that claim still holds"
     sp = cmd("beat", "extend your claim", task=True, who=True)
     sp.add_argument("--ttl", type=float, default=900)
+    sp.add_argument("--token", help=token_help)
     sp = cmd("done", "finish a task you hold", task=True, who=True)
     sp.add_argument("--result", required=True)
+    sp.add_argument("--token", help=token_help)
     sp = cmd("release", "hand back a task you hold", task=True, who=True)
     sp.add_argument("--reason", default="")
+    sp.add_argument("--token", help=token_help)
     cmd("reopen", "put a blocked or done task back to ready", task=True)
 
     a = p.parse_args(argv)
@@ -86,20 +90,22 @@ def main(argv=None):
         need(task, f"no task {a.id}")
         print_task(conn, task)
     elif a.cmd == "claim":
-        need(claim(conn, a.id, a.agent, a.ttl, a.steal), f"{a.id} is not free for {a.agent}")
-        print(f"claimed {a.id} as {a.agent}")
+        token = claim(conn, a.id, a.agent, a.ttl, a.steal)
+        need(token, f"{a.id} is not free for {a.agent}")
+        print(f"claimed {a.id} as {a.agent}, token {token}")
     elif a.cmd == "next":
-        task_id = claim_next(conn, a.agent, a.ttl)
-        need(task_id, f"no free task for {a.agent}")
-        print_task(conn, get(conn, task_id))
+        got = claim_next(conn, a.agent, a.ttl)
+        need(got, f"no free task for {a.agent}")
+        print_task(conn, get(conn, got[0]))
+        print(f"\ntoken: {got[1]}")
     elif a.cmd == "note":
         need(get(conn, a.id), f"no task {a.id}")
         note(conn, a.id, a.agent, a.text)
     elif a.cmd == "beat":
-        need(beat(conn, a.id, a.agent, a.ttl), f"{a.agent} does not hold {a.id}")
+        need(beat(conn, a.id, a.agent, a.ttl, a.token), f"{a.agent} does not hold {a.id}")
     elif a.cmd == "done":
-        need(done(conn, a.id, a.agent, a.result), f"{a.agent} does not hold {a.id}")
+        need(done(conn, a.id, a.agent, a.result, a.token), f"{a.agent} does not hold {a.id}")
     elif a.cmd == "release":
-        need(release(conn, a.id, a.agent, a.reason), f"{a.agent} does not hold {a.id}")
+        need(release(conn, a.id, a.agent, a.reason, token=a.token), f"{a.agent} does not hold {a.id}")
     elif a.cmd == "reopen":
         need(reopen(conn, a.id), f"{a.id} is not blocked or done")

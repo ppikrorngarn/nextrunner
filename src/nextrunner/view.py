@@ -24,4 +24,5 @@ def print_task(conn, task):
         print(f"\nResult:\n{task['result']}")
     print("\nEvents:")
     for e in conn.execute("SELECT * FROM events WHERE task_id = ? ORDER BY id", (task["id"],)):
-        print(f"  {stamp(e['at'])}  {e['agent']:<14} {e['kind']:<9} {e['text']}")
+        text = "" if e["kind"] == "done" else e["text"]  # the result is printed above
+        print(f"  {stamp(e['at'])}  {e['agent']:<14} {e['kind']:<9} {text}")

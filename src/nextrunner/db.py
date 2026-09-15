@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS tasks (
                   CHECK (status IN ('ready', 'running', 'done', 'blocked')),
     claimed_by    TEXT,
     claim_expires REAL,
+    claim_token   TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
     result        TEXT,
     created_by    TEXT NOT NULL,
@@ -59,6 +60,10 @@ def connect(path=None):
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'tasks'").fetchone():
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+    else:
+        cols = {col["name"] for col in conn.execute("PRAGMA table_info(tasks)")}
+        if "claim_token" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN claim_token TEXT")  # board made before claim tokens
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 

@@ -72,8 +72,21 @@ class BoardTest(Base):
     def test_next_takes_oldest_task_meant_for_me(self):
         board.add(self.conn, "for alpha only", to="alpha")
         mine = board.add(self.conn, "for anyone")
-        self.assertEqual(board.claim_next(self.conn, "beta"), mine)
+        self.assertEqual(board.claim_next(self.conn, "beta")[0], mine)
         self.assertIsNone(board.claim_next(self.conn, "beta"))
+
+    def test_old_claim_cannot_finish_after_same_name_retakes(self):
+        t = board.add(self.conn, "claim expires, same name takes it again")
+        first = board.claim(self.conn, t, "alpha", ttl=0.1)
+        time.sleep(0.2)
+        second = board.claim(self.conn, t, "alpha")
+        self.assertTrue(second)
+        self.assertNotEqual(first, second)
+        self.assertFalse(board.done(self.conn, t, "alpha", "stale", token=first))
+        self.assertFalse(board.beat(self.conn, t, "alpha", token=first))
+        self.assertFalse(board.release(self.conn, t, "alpha", token=first))
+        self.assertTrue(board.done(self.conn, t, "alpha", "fresh", token=second))
+        self.assertEqual(db.get(self.conn, t)["result"], "fresh")
 
     def test_release_puts_task_back(self):
         t = board.add(self.conn, "hand back")
