@@ -1,3 +1,5 @@
 board.db*
+agents.json
 __pycache__/
+dispatch.log
 .venv/

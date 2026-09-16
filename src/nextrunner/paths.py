@@ -1,14 +1,16 @@
 """Where nextrunner keeps its files, and how to point it somewhere else.
 
-The board (board.db) is found the first way that applies:
+Two files: the board (board.db) and the agent settings (agents.json). Each
+is found the first way that applies:
 
-1. its own variable: NEXTRUNNER_DB
-2. NEXTRUNNER_HOME, one folder that holds it
+1. its own variable: NEXTRUNNER_DB, NEXTRUNNER_AGENTS
+2. NEXTRUNNER_HOME, one folder that holds both
 3. the usual place for the platform:
 
     macOS    ~/Library/Application Support/nextrunner
-    Linux    $XDG_DATA_HOME/nextrunner (board.db); default ~/.local/share
-    Windows  %LOCALAPPDATA%\\nextrunner (board.db)
+    Linux    $XDG_CONFIG_HOME/nextrunner (agents.json), $XDG_DATA_HOME/nextrunner (board.db);
+             defaults ~/.config, ~/.local/share
+    Windows  %APPDATA%\\nextrunner (agents.json), %LOCALAPPDATA%\\nextrunner (board.db)
 
 Use NEXTRUNNER_HOME to develop or try things out without touching the real board.
 """
@@ -45,6 +47,10 @@ def _pick(var, filename, which):
         return Path(explicit).expanduser()
     root = _env_dir("NEXTRUNNER_HOME")
     return root / filename if root else _platform_dirs()[which] / filename
+
+
+def agents_file():
+    return _pick("NEXTRUNNER_AGENTS", "agents.json", 0)
 
 
 def db_file():

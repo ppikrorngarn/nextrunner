@@ -1,11 +1,18 @@
 """Tests for nextrunner. Run: python3 -m unittest -v   (from the repo root, with src on the path: PYTHONPATH=src, or uv run)"""
 import multiprocessing
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-from nextrunner import board, db
+from nextrunner import agents, board, db, dispatcher
+
+PY = sys.executable
+OK = {"cmd": [PY, "-c", "print('reply from a working agent')"]}
+ECHO = {"cmd": [PY, "-c", "import sys; print(sys.argv[1])", "{prompt}"]}
+LIMITED = {"cmd": [PY, "-c", "import sys; sys.exit(\"You've hit your usage limit. Try again at 5pm.\")"]}
+BROKEN = {"cmd": [PY, "-c", "import sys; sys.exit('segfault in tool')"]}
 
 RACERS, ROUNDS = 3, 1000
 
@@ -35,6 +42,9 @@ class Base(unittest.TestCase):
     def kinds(self, task_id):
         rows = self.conn.execute("SELECT agent, kind FROM events WHERE task_id = ? ORDER BY id", (task_id,))
         return [(r["agent"], r["kind"]) for r in rows]
+
+    def dispatch(self, agents):
+        dispatcher.dispatch(self.conn, agents=agents, timeout=30, say=lambda line: None)
 
 
 class BoardTest(Base):
@@ -113,3 +123,163 @@ class BoardTest(Base):
         print(f"\n  race: {ROUNDS} tasks x {RACERS} racers in {elapsed:.2f}s; "
               f"wins {dict((n, w) for n, w, _ in scores)}; slowest single claim {max(s for *_, s in scores) * 1000:.1f} ms")
 
+
+class DispatchTest(Base):
+    def test_reply_is_recorded_word_for_word(self):
+        t = board.add(self.conn, "say something")
+        self.dispatch({"beta": OK})
+        task = db.get(self.conn, t)
+        self.assertEqual((task["status"], task["claimed_by"], task["result"]), ("done", "beta", "reply from a working agent"))
+
+    def test_out_of_tokens_reroutes_and_rests_the_agent(self):
+        t = board.add(self.conn, "survive a limit")
+        self.dispatch({"alpha": LIMITED, "beta": OK})
+        self.assertEqual((self.status(t), db.get(self.conn, t)["claimed_by"]), ("done", "beta"))
+        self.assertIn(("alpha", "limited"), self.kinds(t))
+        self.assertFalse(agents.is_up(self.conn, "alpha"))
+        self.assertEqual(db.get(self.conn, t)["attempts"], 0)  # a limit is not the task's fault
+        # While alpha rests, new work goes straight to beta without trying alpha.
+        t2 = board.add(self.conn, "next task")
+        self.dispatch({"alpha": LIMITED, "beta": OK})
+        self.assertEqual(self.kinds(t2), [("human", "created"), ("beta", "claimed"), ("beta", "done")])
+
+    def test_next_agent_sees_what_the_last_one_left(self):
+        t = board.add(self.conn, "handoff")
+        board.note(self.conn, t, "human", "the branch is fix/login")
+        self.dispatch({"alpha": BROKEN, "beta": ECHO})
+        prompt = db.get(self.conn, t)["result"]
+        self.assertIn("- human (note): the branch is fix/login", prompt)
+        self.assertIn("- alpha (failed): segfault in tool", prompt)
+
+    def test_strict_task_waits_for_its_agent(self):
+        t = board.add(self.conn, "needs a tool only alpha has", to="alpha", strict=True)
+        self.dispatch({"alpha": LIMITED, "beta": OK})
+        self.assertEqual(self.status(t), "ready")
+        self.assertNotIn("beta", [agent for agent, _ in self.kinds(t)])
+
+    def test_strict_task_blocks_after_max_attempts(self):
+        t = board.add(self.conn, "always breaks", to="alpha", strict=True)
+        self.dispatch({"alpha": BROKEN, "beta": OK})
+        task = db.get(self.conn, t)
+        self.assertEqual((task["status"], task["attempts"]), ("blocked", agents.MAX_ATTEMPTS))
+
+    def test_task_blocks_when_every_agent_fails_then_reopens(self):
+        t = board.add(self.conn, "nobody can do this")
+        self.dispatch({"alpha": BROKEN, "beta": BROKEN})
+        self.assertEqual(self.status(t), "blocked")
+        self.assertTrue(board.reopen(self.conn, t))
+        self.dispatch({"alpha": BROKEN, "beta": OK})
+        self.assertEqual((self.status(t), db.get(self.conn, t)["claimed_by"]), ("done", "beta"))
+
+    def test_all_agents_resting_leaves_task_waiting(self):
+        t = board.add(self.conn, "everyone is out of tokens")
+        self.dispatch({"alpha": LIMITED, "beta": LIMITED})
+        self.assertEqual(self.status(t), "ready")
+
+    def test_lane_without_a_starter_is_left_for_pulling(self):
+        t = board.add(self.conn, "do this in a desktop app", to="desktop")
+        self.dispatch({"beta": OK})
+        self.assertEqual(self.kinds(t), [("human", "created")])
+        self.assertEqual(board.claim_next(self.conn, "desktop")[0], t)
+
+    def test_dead_agents_task_is_picked_up(self):
+        t = board.add(self.conn, "claimed, then the agent vanished")
+        board.claim(self.conn, t, "alpha", ttl=0.1)
+        time.sleep(0.2)
+        self.dispatch({"beta": OK})
+        self.assertEqual((self.status(t), db.get(self.conn, t)["claimed_by"]), ("done", "beta"))
+
+    def test_result_is_dropped_when_claim_is_lost(self):
+        t = board.add(self.conn, "claim taken over while the agent runs")
+        # The agent's run ends with its claim replaced by a newer one.
+        retaken = {"cmd": [PY, "-c", "import sqlite3, sys; c = sqlite3.connect(sys.argv[1] + '/board.db'); "
+                           "c.execute(\"UPDATE tasks SET claim_token = 'newer'\"); c.commit(); print('late reply')",
+                           "{board}"]}
+        said = []
+        dispatcher.dispatch(self.conn, agents={"alpha": retaken}, timeout=30, say=said.append)
+        self.assertIn(f"{t} result from alpha was dropped: the claim was lost", said)
+        self.assertEqual(self.status(t), "running")
+        self.assertIsNone(db.get(self.conn, t)["result"])
+
+    def test_missing_program_counts_as_failure(self):
+        t = board.add(self.conn, "agent not installed")
+        self.dispatch({"ghost": {"cmd": ["no-such-agent-binary", "{prompt}"]}, "beta": OK})
+        self.assertEqual(db.get(self.conn, t)["claimed_by"], "beta")
+
+    def test_limit_inside_a_json_error_reply_rests_the_agent(self):
+        # A CLI with JSON output reports its limit in the result field of an error reply.
+        # dict() rather than {...}: commands go through str.format, so braces are placeholders.
+        script = ("import json; print(json.dumps(dict(is_error=True, "
+                  "result=\"You've hit your session limit \\u00b7 resets 11pm (UTC)\")))")
+        limited = {"cmd": [PY, "-c", script], "reply": "json:result"}
+        t = board.add(self.conn, "limit reported as JSON")
+        self.dispatch({"alpha": limited, "beta": OK})
+        self.assertIn(("alpha", "limited"), self.kinds(t))
+        self.assertEqual(db.get(self.conn, t)["attempts"], 0)
+
+
+class LimitTextTest(unittest.TestCase):
+    """LIMIT_RE against text real agent CLIs print. Product names and URLs are replaced."""
+
+    # Usage limits, credits and expired logins: the agent should rest.
+    RESTING = [
+        "You've hit your usage limit. Upgrade to Pro (https://example.com/pro), visit "
+        "https://example.com/usage to purchase more credits or try again at 1:26 AM.",
+        "You're out of credits. Your workspace is out of credits. Add credits to continue.",
+        "Usage limit reached. You've reached your usage limit. Increase your limits to continue.",
+        "Quota exceeded. Check your plan and billing details.",
+        "Selected model is at capacity. Please try a different model.",
+        "Your access token could not be refreshed because your refresh token has expired. "
+        "Please log out and sign in again.",
+        "no credentials were found. Run agent login or provide an API key through a supported auth env var.",
+        "You've hit your session limit \u00b7 resets 11pm (UTC)",
+        "You've hit your weekly limit \u00b7 resets Oct 9, 5pm (UTC)",
+        "You've hit your team's shared budget. Switch to another model to continue this chat.",
+        "You're out of usage credits. /model to switch models.",
+        "You're out of extra usage",
+        "Credit balance is too low",
+        "Failed to authenticate: OAuth session expired and could not be refreshed",
+        "Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.",
+        "Not logged in \u00b7 Run /login",
+        "API call failed after 3 retries: HTTP 429: Service capacity or quota was reached. "
+        "Slow down and retry shortly.",
+        "API call failed after 3 retries: HTTP 429: Your token-plan 1-week quota has been exhausted.",
+        "Billing or credits exhausted: HTTP 402: Insufficient available credits for this inference request.",
+        "HTTP 401: Your API key is invalid, blocked or out of funds.",
+        "HTTP 401: Invalid API key.",
+    ]
+
+    # Ordinary failures: these count against the task.
+    FAILING = [
+        "segfault in tool",
+        "timed out after 600s",
+        "exit code 1",
+        "API call failed after 3 retries: Connection error.",
+        "Could not start command 'agent'. Install the CLI or set its path.",
+        "agent -z: no final response was produced; treating the run as failed.",
+        "Traceback (most recent call last):\n  File \"main.py\", line 3\nSyntaxError: invalid syntax",
+        "fatal: not a git repository (or any of the parent directories): .git",
+        "error: unknown option '--fast'",
+        "Error: ENOENT: no such file or directory, open 'login.py'",
+        "tests failed: 2 of 30, see test_session.py",
+    ]
+
+    def test_limit_and_login_messages_match(self):
+        for text in self.RESTING:
+            with self.subTest(text=text):
+                self.assertRegex(text, agents.LIMIT_RE)
+
+    def test_ordinary_failures_do_not_match(self):
+        for text in self.FAILING:
+            with self.subTest(text=text):
+                self.assertNotRegex(text, agents.LIMIT_RE)
+
+    def test_reason_is_the_matching_line(self):
+        text = "Reading additional input from stdin...\n" + "diff --git a/x b/x\n" * 50 + \
+               '{"type":"turn.failed","error":{"message":"Selected model is at capacity."}}'
+        self.assertEqual(agents.limit_reason(text), '{"type":"turn.failed","error":{"message":"Selected model is at capacity."}}')
+        self.assertEqual(agents.limit_reason("x" * 500 + " quota"), ("x" * 500 + " quota")[:200])
+
+
+if __name__ == "__main__":
+    unittest.main()

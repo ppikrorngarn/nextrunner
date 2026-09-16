@@ -1,0 +1,23 @@
+{
+  "agent-a": {
+    "cmd": [
+      "agent-a-cli",
+      "run",
+      "--dir",
+      "{cwd}",
+      "--sandbox",
+      "read-only",
+      "--write-reply-to",
+      "{out}",
+      "{prompt}"
+    ],
+    "reply": "file"
+  },
+  "agent-c": {
+    "cmd": [
+      "agent-c-cli",
+      "{prompt}"
+    ],
+    "reply": "stdout"
+  }
+}

@@ -1,24 +1,30 @@
 """The nextrunner command line."""
 import argparse
 import sys
+import time
 
 from . import __version__
+from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
 from .board import ME, add, beat, claim, claim_next, done, note, release, reopen
 from .db import connect, get
-from .view import print_task, shown_status
+from .dispatcher import dispatch
+from .view import print_task, shown_status, stamp
 
 DOC = """\
 nextrunner: a shared task board for a team of AI agents.
 
 State lives in one SQLite file, so no agent owns it and any agent can pick up
-where another stopped.
+where another stopped. `nextrunner dispatch` is the only orchestrator and it is
+plain code: it starts an agent for each ready task, records the reply word for
+word, and reroutes when an agent fails or runs out of tokens.
 
-Agents with a shell can work the board themselves:
+Agents with a shell can also work the board themselves:
     nextrunner next --as NAME         take the next task
     nextrunner note <id> --as NAME    leave a checkpoint
     nextrunner done <id> --as NAME --result "..."
 
-Agent names are free text; the board does not care.
+The dispatcher learns how to start each agent from agents.json (see
+agents.example.json). Agent names are free text; the board does not care.
 """
 
 
@@ -63,6 +69,17 @@ def main(argv=None):
     sp.add_argument("--reason", default="")
     sp.add_argument("--token", help=token_help)
     cmd("reopen", "put a blocked or done task back to ready", task=True)
+    cmd("agents", "show which agents the dispatcher can start")
+    sp = cmd("down", "mark an agent unavailable")
+    sp.add_argument("name")
+    sp.add_argument("--minutes", type=float, default=COOLDOWN_MIN)
+    sp.add_argument("--reason", default="")
+    sp = cmd("up", "mark an agent available again")
+    sp.add_argument("name")
+    sp = cmd("dispatch", "start agents for free tasks")
+    sp.add_argument("--loop", type=float, metavar="SECONDS", help="keep running, one pass every SECONDS")
+    sp.add_argument("--timeout", type=int, default=600, help="seconds one agent run may take (default 600)")
+    sp.add_argument("--dry-run", action="store_true")
 
     a = p.parse_args(argv)
     if a.cmd == "add":
@@ -109,3 +126,18 @@ def main(argv=None):
         need(release(conn, a.id, a.agent, a.reason, token=a.token), f"{a.agent} does not hold {a.id}")
     elif a.cmd == "reopen":
         need(reopen(conn, a.id), f"{a.id} is not blocked or done")
+    elif a.cmd == "agents":
+        for name in load_agents():
+            row = conn.execute("SELECT * FROM agents WHERE name = ?", (name,)).fetchone()
+            state = "up" if is_up(conn, name) else f"down until {stamp(row['down_until'])}  {row['reason']}"
+            print(f"{name:<10} {state}")
+    elif a.cmd == "down":
+        set_down(conn, a.name, a.minutes, a.reason)
+    elif a.cmd == "up":
+        set_up(conn, a.name)
+    elif a.cmd == "dispatch":
+        while True:
+            dispatch(conn, timeout=a.timeout, dry_run=a.dry_run)
+            if not a.loop:
+                break
+            time.sleep(a.loop)
