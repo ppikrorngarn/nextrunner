@@ -84,6 +84,18 @@ running, one pass every 30 seconds.
 `nextrunner agents` shows who is resting and why: the line of the agent's output
 that matched. `nextrunner up NAME` and `nextrunner down NAME` change that by hand.
 
+### Trying it with a fake agent
+
+`dev/fake_agent.py` answers without spending tokens. Point the board and
+`agents.json` at `/tmp` so your real board is left alone, then put `[fail]`,
+`[limit]` or `[slow]` in a task's title to make the fake agent misbehave:
+
+```bash
+echo '{"fake": {"cmd": ["python3", "'"$PWD"'/dev/fake_agent.py", "{prompt}"]}}' > /tmp/nextrunner-agents.json
+export NEXTRUNNER_DB=/tmp/nextrunner-board.db NEXTRUNNER_AGENTS=/tmp/nextrunner-agents.json
+nextrunner add "try it" && nextrunner dispatch && nextrunner list --all
+```
+
 ## agents.json
 
 Key order is the failover order.
