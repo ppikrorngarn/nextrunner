@@ -2,7 +2,7 @@
 import time
 from pathlib import Path
 
-from .agents import COOLDOWN_MIN, LIMIT_RE, limit_reason, load_agents, pick_agent, set_down
+from .agents import COOLDOWN_MIN, LIMIT_RE, command_for, limit_reason, load_agents, pick_agent, set_down
 from .board import claim, done, release
 from .db import CLAIMABLE, get, log, now, tx
 from .runner import build_prompt, run_agent
@@ -48,8 +48,8 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now):
             if not token:
                 break  # someone else took it first
             say(f"{task_id} -> {agent}")
-            ok, text = run_agent(spec["cmd"], spec.get("reply", "stdout"), build_prompt(conn, task, agent),
-                                 cwd, board, timeout)
+            ok, text = run_agent(command_for(spec, task), spec.get("reply", "stdout"),
+                                 build_prompt(conn, task, agent, cwd), cwd, board, timeout)
             if ok:
                 if done(conn, task_id, agent, text, token):
                     say(f"{task_id} done by {agent}")

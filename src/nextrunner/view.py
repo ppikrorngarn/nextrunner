@@ -16,6 +16,8 @@ def print_task(conn, task):
     print(f"{task['id']}  {task['title']}")
     print(f"  status:   {shown_status(task)}" + (f" (held by {task['claimed_by']})" if task["status"] == "running" else ""))
     print(f"  for:      {task['assignee'] or 'anyone'}{' (strict)' if task['strict'] else ''}")
+    may = "edit files in its folder" if task["edit"] else "read only"
+    print(f"  may:      {may}")
     print(f"  folder:   {task['cwd'] or '-'}")
     print(f"  attempts: {task['attempts']}")
     if task["body"]:

@@ -25,6 +25,10 @@ Agents with a shell can also work the board themselves:
 
 The dispatcher learns how to start each agent from agents.json (see
 agents.example.json). Agent names are free text; the board does not care.
+
+A task is read-only unless it was added with --edit. Each agent has one
+command for read tasks and, if you trust it with changes, a second one for
+edit tasks.
 """
 
 
@@ -47,6 +51,7 @@ def main(argv=None):
     sp.add_argument("--to", metavar="AGENT", help="agent this task is for; others take it only if that agent fails")
     sp.add_argument("--strict", action="store_true", help="with --to: never reroute, wait for that agent")
     sp.add_argument("--cwd", help="folder the agent starts in")
+    sp.add_argument("--edit", action="store_true", help="let the agent change files in that folder (default: read-only)")
     sp.add_argument("--by", default=ME)
     sp = cmd("list", "list tasks")
     sp.add_argument("--all", action="store_true", help="include done tasks")
@@ -92,7 +97,7 @@ def main(argv=None):
             sys.exit(f"refused: {message}")
 
     if a.cmd == "add":
-        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by))
+        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit))
     elif a.cmd == "list":
         clauses, params = [], {}
         if not a.all:
@@ -101,7 +106,8 @@ def main(argv=None):
         tasks = conn.execute(f"SELECT * FROM tasks {where} ORDER BY created_at, rowid", params).fetchall()
         for t in tasks:
             who = t["claimed_by"] if t["status"] == "running" else (t["assignee"] or "anyone")
-            print(f"{t['id']}  {shown_status(t):<8} {who:<14} {t['title']}")
+            level = "edit" if t["edit"] else "read"
+            print(f"{t['id']}  {shown_status(t):<8} {who:<14} {level:<6} {t['title']}")
     elif a.cmd == "show":
         task = get(conn, a.id)
         need(task, f"no task {a.id}")
@@ -127,10 +133,10 @@ def main(argv=None):
     elif a.cmd == "reopen":
         need(reopen(conn, a.id), f"{a.id} is not blocked or done")
     elif a.cmd == "agents":
-        for name in load_agents():
+        for name, spec in load_agents().items():
             row = conn.execute("SELECT * FROM agents WHERE name = ?", (name,)).fetchone()
             state = "up" if is_up(conn, name) else f"down until {stamp(row['down_until'])}  {row['reason']}"
-            print(f"{name:<10} {state}")
+            print(f"{name:<10} {'read+edit' if spec.get('cmd_edit') else 'read only':<10} {state}")
     elif a.cmd == "down":
         set_down(conn, a.name, a.minutes, a.reason)
     elif a.cmd == "up":

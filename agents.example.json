@@ -11,6 +11,19 @@
       "{out}",
       "{prompt}"
     ],
+    "cmd_edit": [
+      "agent-a-cli",
+      "run",
+      "--dir",
+      "{cwd}",
+      "--sandbox",
+      "write",
+      "--also-writable",
+      "{board}",
+      "--write-reply-to",
+      "{out}",
+      "{prompt}"
+    ],
     "reply": "file"
   },
   "agent-c": {

@@ -281,5 +281,58 @@ class LimitTextTest(unittest.TestCase):
         self.assertEqual(agents.limit_reason("x" * 500 + " quota"), ("x" * 500 + " quota")[:200])
 
 
+class EditLevelTest(Base):
+    READER = {"cmd": [PY, "-c", "print('ran the read command')"]}
+    EDITOR = {"cmd": [PY, "-c", "print('ran the read command')"],
+              "cmd_edit": [PY, "-c", "print('ran the edit command')"]}
+
+    def result(self, task_id):
+        task = db.get(self.conn, task_id)
+        return task["status"], task["claimed_by"], task["result"]
+
+    def test_task_is_read_only_unless_added_with_edit(self):
+        read = board.add(self.conn, "look at the code")
+        edit = board.add(self.conn, "fix the code", edit=True)
+        self.dispatch({"alpha": self.EDITOR})
+        self.assertEqual(self.result(read), ("done", "alpha", "ran the read command"))
+        self.assertEqual(self.result(edit), ("done", "alpha", "ran the edit command"))
+
+    def test_edit_task_skips_agents_without_an_edit_command(self):
+        t = board.add(self.conn, "fix the code", to="alpha", edit=True)
+        self.dispatch({"alpha": self.READER, "beta": self.EDITOR})
+        self.assertEqual(self.result(t), ("done", "beta", "ran the edit command"))
+        self.assertNotIn("alpha", [agent for agent, _ in self.kinds(t)])
+
+    def test_edit_task_blocks_when_nobody_may_edit(self):
+        t = board.add(self.conn, "fix the code", edit=True)
+        strict = board.add(self.conn, "fix it, alpha only", to="alpha", strict=True, edit=True)
+        self.dispatch({"alpha": self.READER, "beta": self.READER})
+        for task_id in (t, strict):
+            self.assertEqual(self.status(task_id), "blocked")
+            reason = self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'blocked'", (task_id,)).fetchone()
+            self.assertIn("edit", reason["text"])
+
+    def test_prompt_states_the_level_and_placeholders_are_filled(self):
+        folder = Path(self.tmp.name)
+        show = {"cmd": [PY, "-c", "import sys; print(sys.argv[1]); print('board=' + sys.argv[2])", "{prompt}", "{board}"]}
+        show["cmd_edit"] = show["cmd"]
+        read = board.add(self.conn, "look")
+        edit = board.add(self.conn, "change", edit=True, cwd=str(folder))
+        self.dispatch({"alpha": show})
+        self.assertIn("This task is read-only.", db.get(self.conn, read)["result"])
+        self.assertIn(f"You may change files inside {folder}.", db.get(self.conn, edit)["result"])
+        self.assertTrue(db.get(self.conn, edit)["result"].endswith(f"board={folder.resolve()}"))
+
+    def test_board_made_before_edit_levels_still_opens(self):
+        old_path = str(Path(self.tmp.name) / "old.db")
+        old = db.connect(old_path)
+        old.execute("ALTER TABLE tasks DROP COLUMN edit")
+        old.close()
+        conn = db.connect(old_path)
+        self.addCleanup(conn.close)
+        t = board.add(conn, "added after the upgrade")
+        self.assertEqual(db.get(conn, t)["edit"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

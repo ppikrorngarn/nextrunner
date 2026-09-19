@@ -34,10 +34,11 @@ def limit_reason(text, width=200):
 def load_agents():
     """Read how to start each agent. Key order is the failover order.
 
-    {"NAME": {"cmd": [...], "reply": "stdout" | "file" | "json:<key>"}}
-    {prompt}, {cwd}, {out} and {board} (the folder holding the board file)
-    are filled in. "file" reads the reply from {out}; "json:<key>" parses
-    stdout and fails the run if is_error is set.
+    {"NAME": {"cmd": [...], "cmd_edit": [...], "reply": "stdout" | "file" | "json:<key>"}}
+    cmd runs read-only tasks. cmd_edit runs tasks added with --edit; leave it
+    out and the agent never gets one. {prompt}, {cwd}, {out} and {board} (the
+    folder holding the board file) are filled in. "file" reads the reply from
+    {out}; "json:<key>" parses stdout and fails the run if is_error is set.
     """
     path = paths.agents_file()
     if not path.exists():
@@ -64,17 +65,25 @@ def is_up(conn, name):
 
 # ---- dispatcher -------------------------------------------------------------
 
+def command_for(spec, task):
+    """The command this agent runs for this task, or None if it may not take it."""
+    return spec.get("cmd_edit") if task["edit"] else spec["cmd"]
+
+
 def candidates(conn, task, agents):
-    """The agents that may still run this task, in failover order."""
+    """The agents that may still run this task, in failover order, or (None, why) when none may."""
     preferred = [task["assignee"]] if task["assignee"] else []
     names = preferred if task["strict"] else list(dict.fromkeys(preferred + list(agents)))
+    names = [n for n in names if command_for(agents[n], task)]
+    if not names:
+        return None, "blocked: no agent that may take this has a command for edit tasks"
     if task["strict"]:
         names = names if task["attempts"] < MAX_ATTEMPTS else []
     else:
         failed = {r["agent"] for r in conn.execute(
             "SELECT agent FROM events WHERE task_id = ? AND kind = 'failed'", (task["id"],))}
         names = [n for n in names if n not in failed]
-    return names
+    return names, None
 
 
 def pick_agent(conn, task, agents):
@@ -82,7 +91,9 @@ def pick_agent(conn, task, agents):
 
     why is 'waiting' (every agent left is resting) or 'blocked: ...'.
     """
-    names = candidates(conn, task, agents)
+    names, why = candidates(conn, task, agents)
+    if names is None:
+        return None, why
     for name in names:
         if is_up(conn, name):
             return name, None

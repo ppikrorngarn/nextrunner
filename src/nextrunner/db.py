@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     cwd           TEXT,
     assignee      TEXT,
     strict        INTEGER NOT NULL DEFAULT 0,
+    edit          INTEGER NOT NULL DEFAULT 0,
     status        TEXT NOT NULL DEFAULT 'ready'
                   CHECK (status IN ('ready', 'running', 'done', 'blocked')),
     claimed_by    TEXT,
@@ -62,6 +63,8 @@ def connect(path=None):
         conn.executescript(SCHEMA)
     else:
         cols = {col["name"] for col in conn.execute("PRAGMA table_info(tasks)")}
+        if "edit" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN edit INTEGER NOT NULL DEFAULT 0")  # board made before --edit
         if "claim_token" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN claim_token TEXT")  # board made before claim tokens
     conn.execute("PRAGMA synchronous = NORMAL")

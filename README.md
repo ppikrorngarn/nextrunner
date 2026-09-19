@@ -68,6 +68,8 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
   it only if that agent fails. Add `--strict` to never reroute.
 - **Lanes.** A task for a name that has no entry in `agents.json` is left
   alone by the dispatcher. Someone pulls it with `next --as NAME`.
+- **Read or edit.** A task is read-only unless you add it with `--edit`.
+  An edit task lets the agent change files in the task's folder (`--cwd`).
 
 ## The dispatcher
 
@@ -80,6 +82,7 @@ running, one pass every 30 seconds.
 | Limit, quota or login error | Rests that agent for 30 minutes and gives the task to the next agent. This does not count against the task |
 | Any other failure | Records the error and tries the next agent |
 | Every agent failed it | Marks the task blocked. `nextrunner reopen <id>` puts it back |
+| An edit task, and no agent has an edit command | Marks the task blocked |
 
 `nextrunner agents` shows who is resting and why: the line of the agent's output
 that matched. `nextrunner up NAME` and `nextrunner down NAME` change that by hand.
@@ -104,6 +107,7 @@ Key order is the failover order.
 {
   "NAME": {
     "cmd": ["program", "--read-only", "{prompt}"],
+    "cmd_edit": ["program", "--allow-edits", "{prompt}"],
     "reply": "stdout"
   }
 }
@@ -111,6 +115,12 @@ Key order is the failover order.
 
 - `cmd` runs read-only tasks. Give it the most restrictive flags the
   program has.
+- `cmd_edit` runs tasks added with `--edit`. Leave it out and that agent
+  never gets an edit task.
+
+The board only chooses which command to run. The limits themselves come
+from the flags you put in each command, so check what your programs can
+enforce.
 
 Placeholders: `{prompt}` is the task text, `{cwd}` the task's folder,
 `{out}` a temporary file path, `{board}` the folder holding the board file
@@ -132,7 +142,11 @@ takes longer than `--timeout` seconds.
   instructions. The prompt says so, but the agent you start decides what it
   does with them.
 - The dispatcher starts agents with whatever permissions your commands give
-  them. Keep `cmd` read-only.
+  them. Keep `cmd` read-only and add `cmd_edit` only for agents you trust
+  with changes.
+- Read and edit levels guard against accidents. They are not a security
+  boundary: every agent runs as you, and any agent with a shell can add an
+  `--edit` task.
 - The board file is for one machine. Do not put it on a network drive or in
   a synced folder.
 
