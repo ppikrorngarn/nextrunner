@@ -2,6 +2,7 @@
 import json
 import re
 import sys
+from collections import Counter
 
 from . import paths
 from .db import now
@@ -86,15 +87,28 @@ def candidates(conn, task, agents):
     return names, None
 
 
-def pick_agent(conn, task, agents):
+def pick_agent(conn, task, agents, busy=()):
     """Who should run this task now: (name, None), or (None, why).
 
-    why is 'waiting' (every agent left is resting) or 'blocked: ...'.
+    why is 'waiting' (every agent left is resting), 'busy' (the agent it should
+    go to is running another task now) or 'blocked: ...'. busy counts the runs
+    each agent has going.
     """
+    busy = busy if isinstance(busy, Counter) else Counter(busy)
     names, why = candidates(conn, task, agents)
     if names is None:
         return None, why
+    waiting_on_busy = False
     for name in names:
-        if is_up(conn, name):
-            return name, None
+        if not is_up(conn, name):
+            continue
+        if busy[name]:
+            # Wait for the agent the task is for rather than reroute it; a task for anyone moves on.
+            if name == task["assignee"]:
+                return None, "busy"
+            waiting_on_busy = True
+            continue
+        return name, None
+    if waiting_on_busy:
+        return None, "busy"
     return None, "waiting" if names else "blocked: every agent that could take this has failed it"

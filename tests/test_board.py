@@ -1,12 +1,16 @@
 """Tests for nextrunner. Run: python3 -m unittest -v   (from the repo root, with src on the path: PYTHONPATH=src, or uv run)"""
+import contextlib
+import io
 import multiprocessing
+import os
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from nextrunner import agents, board, db, dispatcher
+from nextrunner import agents, board, cli, db, dispatcher
 
 PY = sys.executable
 OK = {"cmd": [PY, "-c", "print('reply from a working agent')"]}
@@ -332,6 +336,105 @@ class EditLevelTest(Base):
         self.addCleanup(conn.close)
         t = board.add(conn, "added after the upgrade")
         self.assertEqual(db.get(conn, t)["edit"], 0)
+
+
+def meets(me, other):
+    """An agent that marks it started, then waits for `other` to start too. Fails if run alone."""
+    code = ("import os, sys, time; d = sys.argv[1]; open(os.path.join(d, sys.argv[2]), 'w').close(); "
+            "end = time.time() + 3\n"
+            "while not os.path.exists(os.path.join(d, sys.argv[3])):\n"
+            "    time.sleep(0.02)\n"
+            "    if time.time() > end: sys.exit('ran alone')\n"
+            "print('met ' + sys.argv[3])")
+    return {"cmd": [PY, "-c", code, "{board}", me, other]}
+
+
+def solo(name):
+    """Holds a lock file named after the agent for a moment; a second run of it at the same time fails."""
+    code = ("import os, sys, time; p = os.path.join(sys.argv[1], sys.argv[2] + '.lock')\n"
+            "try: fd = os.open(p, os.O_CREAT | os.O_EXCL)\n"
+            "except FileExistsError: sys.exit('two runs at once')\n"
+            "time.sleep(0.3); os.close(fd); os.remove(p); print('ran alone')")
+    return {"cmd": [PY, "-c", code, "{board}", name]}
+
+
+class JobsTest(Base):
+    def run_jobs(self, agents, jobs):
+        said = []
+        dispatcher.dispatch(self.conn, agents=agents, timeout=30, say=said.append, jobs=jobs)
+        return said
+
+    def test_two_agents_run_at_the_same_time(self):
+        a = board.add(self.conn, "first", to="alpha")
+        b = board.add(self.conn, "second", to="beta")
+        self.run_jobs({"alpha": meets("a", "b"), "beta": meets("b", "a")}, jobs=2)
+        self.assertEqual(db.get(self.conn, a)["result"], "met b")
+        self.assertEqual(db.get(self.conn, b)["result"], "met a")
+
+    def test_one_job_still_runs_one_at_a_time(self):
+        a = board.add(self.conn, "first", to="alpha")
+        board.add(self.conn, "second", to="beta")
+        # alpha waits for beta, which cannot start until alpha ends, so alpha fails and beta takes it.
+        agents = {"alpha": meets("a", "b"), "beta": OK}
+        start = time.time()
+        self.run_jobs(agents, jobs=1)
+        self.assertIn(("alpha", "failed"), self.kinds(a))
+        self.assertGreater(time.time() - start, 2.5)
+
+    def test_same_agent_never_runs_twice_at_once(self):
+        ids = [board.add(self.conn, f"task {i}") for i in range(3)]
+        self.run_jobs({"alpha": solo("alpha")}, jobs=3)
+        for t in ids:
+            self.assertEqual((self.status(t), db.get(self.conn, t)["result"]), ("done", "ran alone"))
+
+    def test_task_for_a_busy_agent_waits_instead_of_rerouting(self):
+        first = board.add(self.conn, "for anyone")
+        second = board.add(self.conn, "for alpha", to="alpha")
+        self.run_jobs({"alpha": solo("alpha"), "beta": OK}, jobs=2)
+        self.assertEqual(db.get(self.conn, first)["claimed_by"], "alpha")
+        self.assertEqual(db.get(self.conn, second)["claimed_by"], "alpha")
+        self.assertNotIn("beta", [agent for agent, _ in self.kinds(second)])
+
+    def test_task_for_anyone_goes_to_a_free_agent(self):
+        ids = [board.add(self.conn, f"task {i}") for i in range(2)]
+        self.run_jobs({"alpha": solo("alpha"), "beta": solo("beta")}, jobs=2)
+        self.assertEqual({db.get(self.conn, t)["claimed_by"] for t in ids}, {"alpha", "beta"})
+
+    def test_limits_and_failures_still_reroute_with_jobs(self):
+        limited = board.add(self.conn, "survive a limit", to="alpha")
+        broken = board.add(self.conn, "survive a crash", to="gamma")
+        # alpha rests and gamma fails, so both tasks end with beta.
+        self.run_jobs({"alpha": LIMITED, "beta": OK, "gamma": BROKEN}, jobs=3)
+        for t in (limited, broken):
+            self.assertEqual((self.status(t), db.get(self.conn, t)["claimed_by"]), ("done", "beta"))
+            # A limit never counts as an attempt; each failure counts once. Which free agent
+            # takes the limited task first depends on timing, so count failures instead of assuming.
+            failures = sum(kind == "failed" for _, kind in self.kinds(t))
+            self.assertEqual(db.get(self.conn, t)["attempts"], failures)
+        self.assertFalse(agents.is_up(self.conn, "alpha"))
+        self.assertIn(("alpha", "limited"), self.kinds(limited))
+        self.assertIn(("gamma", "failed"), self.kinds(broken))
+
+    def test_strict_task_blocks_after_max_attempts_with_jobs(self):
+        t = board.add(self.conn, "always breaks", to="alpha", strict=True)
+        other = board.add(self.conn, "fine")
+        self.run_jobs({"alpha": BROKEN, "beta": OK}, jobs=2)
+        self.assertEqual((self.status(t), db.get(self.conn, t)["attempts"]), ("blocked", agents.MAX_ATTEMPTS))
+        self.assertEqual(self.status(other), "done")
+
+    def test_lost_claim_is_still_dropped_with_jobs(self):
+        t = board.add(self.conn, "claim taken over while the agent runs")
+        retaken = {"cmd": [PY, "-c", "import sqlite3, sys; c = sqlite3.connect(sys.argv[1] + '/board.db'); "
+                           "c.execute(\"UPDATE tasks SET claim_token = 'newer'\"); c.commit(); print('late reply')",
+                           "{board}"]}
+        said = self.run_jobs({"alpha": retaken, "beta": OK}, jobs=2)
+        self.assertIn(f"{t} result from alpha was dropped: the claim was lost", said)
+        self.assertIsNone(db.get(self.conn, t)["result"])
+
+    def test_jobs_below_one_is_refused(self):
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), self.assertRaises(SystemExit), \
+                contextlib.redirect_stderr(io.StringIO()):
+            cli.main(["dispatch", "--jobs", "0"])
 
 
 if __name__ == "__main__":

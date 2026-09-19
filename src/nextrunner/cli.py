@@ -84,9 +84,13 @@ def main(argv=None):
     sp = cmd("dispatch", "start agents for free tasks")
     sp.add_argument("--loop", type=float, metavar="SECONDS", help="keep running, one pass every SECONDS")
     sp.add_argument("--timeout", type=int, default=600, help="seconds one agent run may take (default 600)")
+    sp.add_argument("--jobs", type=int, default=1, metavar="N",
+                    help="run up to N tasks at once, at most one per agent (default 1)")
     sp.add_argument("--dry-run", action="store_true")
 
     a = p.parse_args(argv)
+    if a.cmd == "dispatch" and a.jobs < 1:
+        p.error("--jobs must be 1 or more")
     if a.cmd == "add":
         if a.strict and not a.to:
             p.error("--strict needs --to")
@@ -143,7 +147,7 @@ def main(argv=None):
         set_up(conn, a.name)
     elif a.cmd == "dispatch":
         while True:
-            dispatch(conn, timeout=a.timeout, dry_run=a.dry_run)
+            dispatch(conn, timeout=a.timeout, dry_run=a.dry_run, jobs=a.jobs)
             if not a.loop:
                 break
             time.sleep(a.loop)
