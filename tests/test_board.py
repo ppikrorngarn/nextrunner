@@ -439,3 +439,48 @@ class JobsTest(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def crowd(size, limit):
+    """Marks itself running, waits up to 1.5 s until `size` runs are going, fails if more than `limit` run at once."""
+    code = ("import os, sys, time, secrets; d = os.path.join(sys.argv[1], 'crowd'); os.makedirs(d, exist_ok=True)\n"
+            "me = os.path.join(d, secrets.token_hex(4)); open(me, 'w').close(); end = time.time() + 1.5\n"
+            "while len(os.listdir(d)) < int(sys.argv[2]) and time.time() < end: time.sleep(0.02)\n"
+            "peak = len(os.listdir(d)); time.sleep(0.2); os.remove(me)\n"
+            "sys.exit('%d at once' % peak) if peak > int(sys.argv[3]) else print('peak %d' % peak)")
+    return [PY, "-c", code, "{board}", str(size), str(limit)]
+
+
+class ParallelTest(Base):
+    """Several runs of one agent at once. (No braces in fake agents' code: the dispatcher fills {placeholders}.)"""
+    run_jobs = JobsTest.run_jobs
+
+    def test_one_agent_runs_several_tasks_at_once(self):
+        ids = [board.add(self.conn, f"task {i}", to="alpha", strict=True) for i in range(3)]
+        self.run_jobs({"alpha": {"cmd": crowd(3, 3), "parallel": 3}}, jobs=5)
+        self.assertEqual({db.get(self.conn, t)["result"] for t in ids}, {"peak 3"})
+
+    def test_parallel_is_a_ceiling(self):
+        ids = [board.add(self.conn, f"task {i}", to="alpha", strict=True) for i in range(4)]
+        self.run_jobs({"alpha": {"cmd": crowd(3, 2), "parallel": 2}}, jobs=5)
+        for t in ids:
+            self.assertEqual(self.status(t), "done")
+            self.assertEqual(db.get(self.conn, t)["result"], "peak 2")
+
+    def test_jobs_still_caps_the_total(self):
+        ids = [board.add(self.conn, f"task {i}", to="alpha", strict=True) for i in range(2)]
+        self.run_jobs({"alpha": {"cmd": crowd(2, 1), "parallel": 5}}, jobs=1)
+        self.assertEqual({db.get(self.conn, t)["result"] for t in ids}, {"peak 1"})
+
+
+class AgentsCommandTest(Base):
+    def test_shows_parallel_per_agent(self):
+        path = Path(self.tmp.name) / "agents.json"
+        path.write_text('{"alpha": {"cmd": ["x"], "cmd_edit": ["x"], "parallel": 3}, "beta": {"cmd": ["x"]}}')
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path, "NEXTRUNNER_AGENTS": str(path)}), \
+                contextlib.redirect_stdout(out):
+            cli.main(["agents"])
+        lines = out.getvalue().splitlines()
+        self.assertRegex(lines[0], r"^alpha\s+read\+edit\s+parallel 3\s+up$")
+        self.assertRegex(lines[1], r"^beta\s+read only\s+parallel 1\s+up$")

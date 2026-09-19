@@ -91,8 +91,8 @@ def pick_agent(conn, task, agents, busy=()):
     """Who should run this task now: (name, None), or (None, why).
 
     why is 'waiting' (every agent left is resting), 'busy' (the agent it should
-    go to is running another task now) or 'blocked: ...'. busy counts the runs
-    each agent has going.
+    go to already runs as many tasks as its "parallel" setting allows, default 1)
+    or 'blocked: ...'. busy counts the runs each agent has going.
     """
     busy = busy if isinstance(busy, Counter) else Counter(busy)
     names, why = candidates(conn, task, agents)
@@ -102,7 +102,7 @@ def pick_agent(conn, task, agents, busy=()):
     for name in names:
         if not is_up(conn, name):
             continue
-        if busy[name]:
+        if busy[name] >= agents[name].get("parallel", 1):
             # Wait for the agent the task is for rather than reroute it; a task for anyone moves on.
             if name == task["assignee"]:
                 return None, "busy"

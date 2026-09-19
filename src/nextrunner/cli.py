@@ -85,7 +85,7 @@ def main(argv=None):
     sp.add_argument("--loop", type=float, metavar="SECONDS", help="keep running, one pass every SECONDS")
     sp.add_argument("--timeout", type=int, default=600, help="seconds one agent run may take (default 600)")
     sp.add_argument("--jobs", type=int, default=1, metavar="N",
-                    help="run up to N tasks at once, at most one per agent (default 1)")
+                    help="run up to N tasks at once; one agent runs one at a time unless it sets \"parallel\" (default 1)")
     sp.add_argument("--dry-run", action="store_true")
 
     a = p.parse_args(argv)
@@ -140,7 +140,8 @@ def main(argv=None):
         for name, spec in load_agents().items():
             row = conn.execute("SELECT * FROM agents WHERE name = ?", (name,)).fetchone()
             state = "up" if is_up(conn, name) else f"down until {stamp(row['down_until'])}  {row['reason']}"
-            print(f"{name:<10} {'read+edit' if spec.get('cmd_edit') else 'read only':<10} {state}")
+            print(f"{name:<10} {'read+edit' if spec.get('cmd_edit') else 'read only':<10} "
+                  f"parallel {spec.get('parallel', 1):<3} {state}")
     elif a.cmd == "down":
         set_down(conn, a.name, a.minutes, a.reason)
     elif a.cmd == "up":

@@ -22,10 +22,10 @@ def clock(t):
 def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1):
     """One pass over the board: run every free task, rerouting when an agent fails.
 
-    Up to `jobs` agents run at once, never two runs for the same agent. Only
-    the agent runs happen in worker threads; every board read and write stays
-    on this thread and this connection, so claims, tokens and rests work as
-    they do with one job.
+    Up to `jobs` runs go at once in total, and up to each agent's "parallel"
+    setting (default 1) on one agent. Only the agent runs happen in worker
+    threads; every board read and write stays on this thread and this
+    connection, so claims, tokens and rests work as they do with one job.
     """
     agents = agents or load_agents()
     board = Path(conn.execute("PRAGMA database_list").fetchone()["file"]).parent
