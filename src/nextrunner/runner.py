@@ -44,4 +44,7 @@ def run_agent(cmd, mode, prompt, cwd, board, timeout):
                 ok = False
     if ok and reply:
         return True, reply
-    return False, (reply or proc.stderr.strip() or proc.stdout.strip() or f"exit code {proc.returncode}")[-2000:]
+    # Show both streams: one agent prints noise on stderr and its real error as JSON on stdout.
+    # The tail is kept, and the board's limit check reads this text, so the error must not be lost.
+    detail = "\n".join(part for part in (proc.stderr.strip(), reply or proc.stdout.strip()) if part)
+    return False, (detail or f"exit code {proc.returncode}")[-2000:]

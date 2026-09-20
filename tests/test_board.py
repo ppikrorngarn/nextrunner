@@ -221,6 +221,29 @@ class DispatchTest(Base):
         self.assertIn(("alpha", "limited"), self.kinds(t))
         self.assertEqual(db.get(self.conn, t)["attempts"], 0)
 
+    def test_limit_on_stdout_is_found_when_stderr_has_other_noise(self):
+        # Seen with a real CLI: stderr says "Reading additional input from stdin..." while the
+        # capacity error is a JSON event on stdout. Looking only at stderr counted it as a failed attempt.
+        # dict() rather than {...}: commands go through str.format, so braces are placeholders.
+        script = ("import sys, json; sys.stderr.write('Reading additional input from stdin...\\n'); "
+                  "print(json.dumps(dict(type='turn.failed', error=dict("
+                  "message='Selected model is at capacity. Please try a different model.')))); sys.exit(1)")
+        t = board.add(self.conn, "capacity error on stdout")
+        self.dispatch({"alpha": {"cmd": [PY, "-c", script]}, "beta": OK})
+        self.assertIn(("alpha", "limited"), self.kinds(t))
+        self.assertNotIn(("alpha", "failed"), self.kinds(t))
+        self.assertEqual(db.get(self.conn, t)["attempts"], 0)
+        self.assertFalse(agents.is_up(self.conn, "alpha"))
+
+    def test_a_failure_with_no_limit_text_still_counts(self):
+        script = "import sys; sys.stderr.write('noise\\n'); print('segfault in tool'); sys.exit(1)"
+        t = board.add(self.conn, "plain failure")
+        self.dispatch({"alpha": {"cmd": [PY, "-c", script]}, "beta": OK})
+        self.assertIn(("alpha", "failed"), self.kinds(t))
+        self.assertTrue(agents.is_up(self.conn, "alpha"))
+        failure = [e["text"] for e in self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'failed'", (t,))][0]
+        self.assertEqual(failure, "noise\nsegfault in tool")
+
 
 class LimitTextTest(unittest.TestCase):
     """LIMIT_RE against text real agent CLIs print. Product names and URLs are replaced."""
