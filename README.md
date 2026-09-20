@@ -76,6 +76,20 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
 `nextrunner dispatch` makes one pass. `nextrunner dispatch --loop 30` keeps
 running, one pass every 30 seconds.
 
+`nextrunner dispatch --jobs 3` runs up to 3 tasks at once (default 1, one at a
+time). One agent never runs two tasks at the same moment: a task for a busy
+agent waits for it, and a task for anyone goes to the next free agent. Claims,
+tokens, failover and rests work the same as with one job. A pass ends when
+every run it started has finished.
+
+To let one agent run several tasks at once, give it `"parallel": N` in
+`agents.json` (default 1). `--jobs` still caps the total. Several runs of one
+agent share its usage limit, so they can run it out sooner, and edit tasks in
+the same folder can get in each other's way.
+
+For each free task it picks the agent the task is for, or else the first
+available agent in `agents.json` order. Then:
+
 | What happened | What the dispatcher does |
 |---|---|
 | The agent replied | Stores the reply word for word and marks the task done |
@@ -135,6 +149,10 @@ Placeholders: `{prompt}` is the task text, `{cwd}` the task's folder,
 
 A run fails when the exit code is not zero, the reply is empty, or the run
 takes longer than `--timeout` seconds.
+
+Optional keys:
+
+- `parallel`: how many tasks this agent may run at once (default 1).
 
 ## Safety
 
