@@ -52,6 +52,8 @@ def main(argv=None):
     sp.add_argument("--strict", action="store_true", help="with --to: never reroute, wait for that agent")
     sp.add_argument("--cwd", help="folder the agent starts in")
     sp.add_argument("--edit", action="store_true", help="let the agent change files in that folder (default: read-only)")
+    sp.add_argument("--commit", action="store_true",
+                    help="implies --edit: when the agent finishes, the dispatcher commits the files it changed (never pushes)")
     sp.add_argument("--by", default=ME)
     sp = cmd("list", "list tasks")
     sp.add_argument("--all", action="store_true", help="include done tasks")
@@ -101,7 +103,7 @@ def main(argv=None):
             sys.exit(f"refused: {message}")
 
     if a.cmd == "add":
-        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit))
+        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit, a.commit))
     elif a.cmd == "list":
         clauses, params = [], {}
         if not a.all:
@@ -110,7 +112,7 @@ def main(argv=None):
         tasks = conn.execute(f"SELECT * FROM tasks {where} ORDER BY created_at, rowid", params).fetchall()
         for t in tasks:
             who = t["claimed_by"] if t["status"] == "running" else (t["assignee"] or "anyone")
-            level = "edit" if t["edit"] else "read"
+            level = "commit" if t["commit_changes"] else "edit" if t["edit"] else "read"
             print(f"{t['id']}  {shown_status(t):<8} {who:<14} {level:<6} {t['title']}")
     elif a.cmd == "show":
         task = get(conn, a.id)

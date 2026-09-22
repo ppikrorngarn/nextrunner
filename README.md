@@ -70,6 +70,9 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
   alone by the dispatcher. Someone pulls it with `next --as NAME`.
 - **Read or edit.** A task is read-only unless you add it with `--edit`.
   An edit task lets the agent change files in the task's folder (`--cwd`).
+- **Commit.** Add a task with `--commit` (it implies `--edit`) and the
+  dispatcher commits what the agent changed once it finishes, so the agent
+  needs no write access to `.git`. See below.
 
 ## The dispatcher
 
@@ -100,6 +103,25 @@ available agent in `agents.json` order. Then:
 
 `nextrunner agents` shows who is resting and why: the line of the agent's output
 that matched. `nextrunner up NAME` and `nextrunner down NAME` change that by hand.
+
+### Commits for `--commit` tasks
+
+Before the run, the dispatcher notes which files in the folder's git
+repository already have changes. After a successful run it commits only the
+files that were clean before and changed during the run:
+
+- The message is the reply's last `COMMIT: <summary>` line (the prompt asks
+  for one), or else the task title. The body names the task and the agent.
+- A file that already had changes before the run is left uncommitted and
+  named on the board, because the agent's change cannot be told apart from
+  what was already there.
+- Anything you had staged stays staged and out of the commit.
+- A failed run commits nothing. A folder outside a git repository is skipped.
+- It never pushes.
+
+The outcome is a `commit` event on the task (`nextrunner show <id>`). Two
+`--commit` tasks in the same repository at the same time (`--jobs` above 1)
+can pick up each other's files, so run those one at a time.
 
 ### Trying it with a fake agent
 

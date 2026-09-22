@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nextrunner import agents, board, cli, db, dispatcher
+from nextrunner import agents, board, cli, db, dispatcher, runner
 
 PY = sys.executable
 OK = {"cmd": [PY, "-c", "print('reply from a working agent')"]}
@@ -462,6 +462,93 @@ class JobsTest(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# An agent that adds a.txt, changes b.txt, deletes c.txt and also edits notes.txt,
+# which already had changes before the task.
+EDITOR = {"cmd_edit": [PY, "-c", (
+    "from pathlib import Path\n"
+    "Path('a.txt').write_text('new\\n'); Path('b.txt').write_text('changed\\n'); Path('c.txt').unlink()\n"
+    "Path('notes.txt').write_text(Path('notes.txt').read_text() + 'agent line\\n')\n"
+    "print('Done the edits.\\nCOMMIT: Add a, change b, drop c')")],
+    "cmd": [PY, "-c", "print('read only')"]}
+
+
+class CommitTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        self.git("init", "-q")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "Test")
+        for name in ("b.txt", "c.txt", "notes.txt", "staged.txt"):
+            (self.repo / name).write_text(f"{name}\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "start")
+        # Work that was already in progress before the task, and must stay out of its commit.
+        (self.repo / "notes.txt").write_text("notes.txt\nmy own edit\n")
+        (self.repo / "staged.txt").write_text("staged by hand\n")
+        self.git("add", "staged.txt")
+        (self.repo / "scratch.txt").write_text("untracked\n")
+
+    def git(self, *args):
+        return runner.git(self.repo, *args).stdout.strip()
+
+    def committed_files(self):
+        return sorted(self.git("show", "--name-only", "--format=", "HEAD").splitlines())
+
+    def test_commits_only_what_the_agent_changed(self):
+        t = board.add(self.conn, "edit files", to="alpha", cwd=str(self.repo), commit=True)
+        self.dispatch({"alpha": EDITOR})
+        self.assertEqual(self.git("log", "-1", "--format=%s"), "Add a, change b, drop c")
+        self.assertIn(f"Board task {t}, done by alpha.", self.git("log", "-1", "--format=%b"))
+        self.assertEqual(self.committed_files(), ["a.txt", "b.txt", "c.txt"])
+        status = runner.git(self.repo, "status", "--porcelain").stdout
+        self.assertIn(" M notes.txt", status)   # pre-existing change left alone
+        self.assertIn("M  staged.txt", status)  # still staged, not committed
+        self.assertIn("?? scratch.txt", status)
+        commit_event = self.conn.execute(
+            "SELECT text FROM events WHERE task_id = ? AND kind = 'commit'", (t,)).fetchone()["text"]
+        self.assertIn("(3 files)", commit_event)
+        self.assertIn("notes.txt", commit_event)  # named as left uncommitted
+
+    def test_title_is_the_message_without_a_commit_line(self):
+        agent = {"cmd_edit": [PY, "-c", "open('a.txt', 'w').write('x'); print('done')"], "cmd": OK["cmd"]}
+        board.add(self.conn, "Write a.txt", to="alpha", cwd=str(self.repo), commit=True)
+        self.dispatch({"alpha": agent})
+        self.assertEqual(self.git("log", "-1", "--format=%s"), "Write a.txt")
+        self.assertEqual(self.committed_files(), ["a.txt"])
+
+    def test_edit_without_commit_leaves_changes_uncommitted(self):
+        board.add(self.conn, "edit files", to="alpha", cwd=str(self.repo), edit=True)
+        self.dispatch({"alpha": EDITOR})
+        self.assertEqual(self.git("log", "-1", "--format=%s"), "start")
+
+    def test_failed_run_commits_nothing(self):
+        broken = {"cmd_edit": [PY, "-c", "open('a.txt', 'w').write('x'); raise SystemExit('segfault in tool')"]}
+        t = board.add(self.conn, "edit files", to="alpha", strict=True, cwd=str(self.repo), commit=True)
+        self.dispatch({"alpha": broken})
+        self.assertEqual(self.git("log", "-1", "--format=%s"), "start")
+        self.assertNotIn(("dispatcher", "commit"), self.kinds(t))
+
+    def test_outside_a_repo_the_commit_is_skipped(self):
+        folder = Path(self.tmp.name) / "plain"
+        folder.mkdir()
+        agent = {"cmd_edit": [PY, "-c", "open('a.txt', 'w').write('x'); print('done')"]}
+        t = board.add(self.conn, "edit files", to="alpha", cwd=str(folder), commit=True)
+        self.dispatch({"alpha": agent})
+        text = self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'commit'", (t,)).fetchone()["text"]
+        self.assertTrue(text.startswith("skipped: the folder is not in a git repository"))
+        self.assertEqual(self.status(t), "done")
+
+    def test_commit_implies_edit_and_tells_the_agent(self):
+        t = board.add(self.conn, "edit files", to="alpha", cwd=str(self.repo), commit=True)
+        task = db.get(self.conn, t)
+        self.assertTrue(task["edit"])
+        prompt = runner.build_prompt(self.conn, task, "alpha", str(self.repo))
+        self.assertIn("Do not commit", prompt)
+        self.assertIn("COMMIT:", prompt)
 
 
 def crowd(size, limit):

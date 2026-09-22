@@ -7,15 +7,16 @@ from .db import CLAIMABLE, log, now, tx
 ME = os.environ.get("NEXTRUNNER_AGENT", "human")
 
 
-def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False):
-    level = "edit" if edit else "read-only"
+def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False, commit=False):
+    edit = edit or commit  # committing the changes only makes sense if the agent may make them
+    level = "edit, commit" if commit else "edit" if edit else "read-only"
     t = now()
     task_id = "t_" + secrets.token_hex(4)
     with tx(conn):
         conn.execute(
-            "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, created_by, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (task_id, title, body, cwd, to, int(strict), int(edit), by, t, t),
+            "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, "
+            "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), by, t, t),
         )
         log(conn, task_id, by, "created", f"to={to or 'anyone'}{' (strict)' if strict else ''}, {level}")
     return task_id
