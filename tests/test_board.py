@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nextrunner import agents, board, cli, db, dispatcher, runner
+from nextrunner import agents, board, cli, db, dispatcher, runner, view
 
 PY = sys.executable
 OK = {"cmd": [PY, "-c", "print('reply from a working agent')"]}
@@ -549,6 +549,47 @@ class CommitTest(Base):
         prompt = runner.build_prompt(self.conn, task, "alpha", str(self.repo))
         self.assertIn("Do not commit", prompt)
         self.assertIn("COMMIT:", prompt)
+
+
+class WatchTest(Base):
+    def test_screen_flags_stale_and_expired_and_resting(self):
+        quiet = board.add(self.conn, "quiet task", to="alpha")
+        lively = board.add(self.conn, "lively task", to="beta")
+        lost = board.add(self.conn, "agent died", to="gamma")
+        waiting = board.add(self.conn, "not started")
+        board.claim(self.conn, quiet, "alpha", ttl=3600)
+        board.claim(self.conn, lively, "beta", ttl=3600)
+        board.claim(self.conn, lost, "gamma", ttl=0.01)
+        # The quiet task's last event was 20 minutes ago.
+        self.conn.execute("UPDATE events SET at = at - 1200 WHERE task_id = ?", (quiet,))
+        agents.set_down(self.conn, "delta", 30, "You've hit your usage limit")
+        time.sleep(0.05)
+        screen = view.render_status(self.conn, stale_min=15, width=200)
+        line = {t: next(l for l in screen.splitlines() if l.startswith(t)) for t in (quiet, lively, lost, waiting)}
+        self.assertIn("STALE", line[quiet])
+        self.assertIn("running", line[lively])
+        self.assertIn("left", line[lively])
+        self.assertIn("expired", line[lost])
+        self.assertIn("ready", line[waiting])
+        self.assertIn("resting: delta", screen)
+        self.assertIn("1 stale, 1 running, 1 expired, 1 ready", screen)
+
+    def test_done_tasks_show_for_an_hour(self):
+        recent, old = board.add(self.conn, "recent"), board.add(self.conn, "old")
+        for t in (recent, old):
+            board.claim(self.conn, t, "alpha")
+            board.done(self.conn, t, "alpha", "ok")
+        self.conn.execute("UPDATE tasks SET updated_at = updated_at - 7200 WHERE id = ?", (old,))
+        screen = view.render_status(self.conn, width=200)
+        self.assertIn(recent, screen.split("latest:")[0])
+        self.assertNotIn(old, screen.split("latest:")[0])
+
+    def test_status_prints_the_board(self):
+        board.add(self.conn, "a task")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stdout(out):
+            cli.main(["status"])
+        self.assertIn("1 ready", out.getvalue())
 
 
 def crowd(size, limit):

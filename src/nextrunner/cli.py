@@ -1,5 +1,7 @@
 """The nextrunner command line."""
 import argparse
+import os
+import shutil
 import sys
 import time
 
@@ -8,7 +10,7 @@ from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
 from .board import ME, add, beat, claim, claim_next, done, note, release, reopen
 from .db import connect, get
 from .dispatcher import dispatch
-from .view import print_task, shown_status, stamp
+from .view import FINISHED, print_task, render_status, shown_status, stamp
 
 DOC = """\
 nextrunner: a shared task board for a team of AI agents.
@@ -89,6 +91,9 @@ def main(argv=None):
     sp.add_argument("--jobs", type=int, default=1, metavar="N",
                     help="run up to N tasks at once; one agent runs one at a time unless it sets \"parallel\" (default 1)")
     sp.add_argument("--dry-run", action="store_true")
+    sp = cmd("status", "print the board as text: open tasks, resting agents, latest events (for agents and scripts)")
+    sp.add_argument("--stale", type=float, default=15, metavar="MINUTES",
+                    help="flag a running task with no event for this long (default 15)")
 
     a = p.parse_args(argv)
     if a.cmd == "dispatch" and a.jobs < 1:
@@ -107,7 +112,7 @@ def main(argv=None):
     elif a.cmd == "list":
         clauses, params = [], {}
         if not a.all:
-            clauses.append("status != 'done'")
+            clauses.append(f"status NOT IN {FINISHED}")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         tasks = conn.execute(f"SELECT * FROM tasks {where} ORDER BY created_at, rowid", params).fetchall()
         for t in tasks:
@@ -148,6 +153,9 @@ def main(argv=None):
         set_down(conn, a.name, a.minutes, a.reason)
     elif a.cmd == "up":
         set_up(conn, a.name)
+    elif a.cmd == "status":
+        color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+        print(render_status(conn, a.stale, shutil.get_terminal_size((120, 24)).columns, color))
     elif a.cmd == "dispatch":
         while True:
             dispatch(conn, timeout=a.timeout, dry_run=a.dry_run, jobs=a.jobs)

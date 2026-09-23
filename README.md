@@ -22,8 +22,15 @@ export NEXTRUNNER_AGENTS="$PWD/agents.json"
 nextrunner add "Summarise the open issues" --body "Details here"
 nextrunner dispatch
 nextrunner list --all
+nextrunner status               # the board as text
 nextrunner show <id>
 ```
+
+`status` prints open tasks and tasks finished in
+the last hour, how long ago each one last had an event, how much claim time
+is left, which agents are resting, and the five latest events. A running task
+with no event for 15 minutes is marked `STALE` (change it with `--stale
+MINUTES`). It is plain text, so agents and scripts can read it.
 
 ## Working the board by hand
 

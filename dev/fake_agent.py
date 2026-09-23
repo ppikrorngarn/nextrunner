@@ -6,7 +6,7 @@
 It answers after a short pause. Put a word in the task's title or brief to make it misbehave:
     [fail]    exit with an error, so the task is rerouted
     [limit]   print a usage-limit message, so this agent rests
-    [slow]    take 20 seconds (see a task stay running)
+    [slow]    take 20 seconds (see a task stay running; try the STALE flag with --stale 0.1)
 With --edit it also writes fake-agent-was-here.txt in the task's folder and ends with a COMMIT: line.
 """
 import argparse
