@@ -3,6 +3,7 @@ import contextlib
 import io
 import multiprocessing
 import os
+import sqlite3
 import sys
 import tempfile
 import time
@@ -590,6 +591,39 @@ class WatchTest(Base):
         with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stdout(out):
             cli.main(["status"])
         self.assertIn("1 ready", out.getvalue())
+
+
+class TaskIdTest(Base):
+    def test_format(self):
+        task_id = board.new_task_id(board.ID_EPOCH + 36 ** 3)
+        self.assertRegex(task_id, r"^t_[0-9a-z]{10}$")
+        self.assertEqual(task_id[2:8], "001000")
+
+    def test_ids_sort_by_creation_time(self):
+        times = [board.ID_EPOCH + s for s in (0, 1, 35, 36, 3600, 86400 * 365, 36 ** 6 - 1)]
+        ids = [board.new_task_id(t) for t in times]
+        self.assertEqual([i[:8] for i in ids], sorted(i[:8] for i in ids))
+
+    def test_a_clash_draws_new_random_digits(self):
+        first = board.add(self.conn, "first")
+        # The first draw repeats the existing ID; the retry draws a fresh one.
+        with mock.patch.object(board, "new_task_id", side_effect=[first, "t_retried000"]):
+            second = board.add(self.conn, "second")
+        self.assertEqual(second, "t_retried000")
+        self.assertEqual(db.get(self.conn, first)["title"], "first")
+        self.assertEqual(self.kinds(second), [("human", "created")])
+
+    def test_gives_up_after_five_clashes(self):
+        first = board.add(self.conn, "first")
+        with mock.patch.object(board, "new_task_id", return_value=first):
+            with self.assertRaises(sqlite3.IntegrityError):
+                board.add(self.conn, "never fits")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
+
+    def test_old_style_ids_still_work(self):
+        self.conn.execute("INSERT INTO tasks (id, title, created_by, created_at, updated_at) "
+                          "VALUES ('t_32d225ac', 'old', 'human', 0, 0)")
+        self.assertTrue(board.claim(self.conn, "t_32d225ac", "alpha"))
 
 
 def crowd(size, limit):

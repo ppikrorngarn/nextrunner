@@ -59,6 +59,9 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
 ## How tasks move
 
 - A task is `ready`, `running`, `done` or `blocked`.
+- **Task IDs** look like `t_0e8d4ba639`: six base-36 digits of seconds
+  since 2026 (so IDs sort by creation time) and four random ones. Two IDs
+  can only match within the same second; `add` then draws again.
 - **Claims.** Only one agent can claim a task. A claim expires after its
   time limit (15 minutes unless you pass `--ttl`). An expired claim counts as
   free, so the work of an agent that died can be taken by another.

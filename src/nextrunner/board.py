@@ -1,25 +1,47 @@
 """Tasks and events: add, claim, note, beat, done, release, reopen."""
 import os
 import secrets
+import sqlite3
 
 from .db import CLAIMABLE, log, now, tx
 
 ME = os.environ.get("NEXTRUNNER_AGENT", "human")
 
+ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+ID_EPOCH = 1767225600  # 2026-01-01 00:00 UTC; six base-36 digits of seconds last until about 2095
+
+
+def new_task_id(t=None):
+    """'t_' + seconds since ID_EPOCH in six base-36 digits + four random base-36 digits.
+
+    IDs sort by creation time as text, and two can only match when both tasks
+    are made in the same second and draw the same four random digits.
+    """
+    n, stamp = max(0, int(now() if t is None else t) - ID_EPOCH), ""
+    for _ in range(6):
+        n, r = divmod(n, 36)
+        stamp = ID_ALPHABET[r] + stamp
+    return "t_" + stamp + "".join(secrets.choice(ID_ALPHABET) for _ in range(4))
+
 
 def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False, commit=False):
     edit = edit or commit  # committing the changes only makes sense if the agent may make them
     level = "edit, commit" if commit else "edit" if edit else "read-only"
-    t = now()
-    task_id = "t_" + secrets.token_hex(4)
-    with tx(conn):
-        conn.execute(
-            "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, "
-            "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), by, t, t),
-        )
-        log(conn, task_id, by, "created", f"to={to or 'anyone'}{' (strict)' if strict else ''}, {level}")
-    return task_id
+    for attempt in range(5):
+        t = now()
+        task_id = new_task_id(t)
+        try:
+            with tx(conn):
+                conn.execute(
+                    "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, "
+                    "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), by, t, t),
+                )
+                log(conn, task_id, by, "created", f"to={to or 'anyone'}{' (strict)' if strict else ''}, {level}")
+            return task_id
+        except sqlite3.IntegrityError:
+            if attempt == 4:
+                raise  # five clashes in a row means something else is wrong
 
 
 def claim(conn, task_id, agent, ttl=900, steal=False):
