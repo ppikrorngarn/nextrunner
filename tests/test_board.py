@@ -684,3 +684,90 @@ class AgentsCommandTest(Base):
         lines = out.getvalue().splitlines()
         self.assertRegex(lines[0], r"^alpha\s+read\+edit\s+parallel 3\s+up$")
         self.assertRegex(lines[1], r"^beta\s+read only\s+parallel 1\s+up$")
+
+
+# A fake agent that starts a numbered session, and a resume command that says which session it continued.
+FRESH = [PY, "-c", "import sys, secrets; print('chatter'); print('session_id: s-' + secrets.token_hex(3)); "
+                   "print('fresh answer'); print('saw earlier result' if 'Its result' in sys.argv[1] else '')", "{prompt}"]
+RESUME = [PY, "-c", "import sys; print('session_id: ' + sys.argv[1]); print('continued ' + sys.argv[1]); "
+                    "print('saw earlier result' if 'Its result' in sys.argv[2] else '')", "{session}", "{prompt}"]
+SESSIONED = {"cmd": FRESH, "cmd_resume": RESUME, "session": r"^session_id: (\S+)$"}
+
+
+class SessionTest(Base):
+    def session_of(self, task_id):
+        return board.last_session(self.conn, task_id)
+
+    def test_session_is_saved_and_kept_out_of_the_reply(self):
+        t = board.add(self.conn, "first", to="alpha")
+        self.dispatch({"alpha": SESSIONED})
+        agent, session = self.session_of(t)
+        self.assertEqual(agent, "alpha")
+        self.assertRegex(session, r"^s-[0-9a-f]{6}$")
+        self.assertEqual(db.get(self.conn, t)["result"], "fresh answer")
+
+    def test_follow_resumes_the_same_session_with_the_same_agent_and_folder(self):
+        first = board.add(self.conn, "first", to="alpha", cwd=self.tmp.name)
+        self.dispatch({"alpha": SESSIONED, "beta": OK})
+        session = self.session_of(first)[1]
+        second = board.add(self.conn, "follow-up", follows=first)
+        task = db.get(self.conn, second)
+        self.assertEqual((task["assignee"], task["cwd"], task["follows"]), ("alpha", self.tmp.name, first))
+        self.dispatch({"alpha": SESSIONED, "beta": OK})
+        self.assertEqual(db.get(self.conn, second)["result"], f"continued {session}")
+        self.assertEqual(self.session_of(second), ("alpha", session))
+
+    def test_without_resume_the_follow_up_gets_the_earlier_result(self):
+        first = board.add(self.conn, "first", to="alpha")
+        self.dispatch({"alpha": {"cmd": FRESH, "session": r"^session_id: (\S+)$"}})
+        second = board.add(self.conn, "follow-up", follows=first)
+        self.dispatch({"alpha": {"cmd": FRESH, "session": r"^session_id: (\S+)$"}})
+        self.assertEqual(db.get(self.conn, second)["result"], "fresh answer\nsaw earlier result")
+
+    def test_a_retry_on_the_same_agent_resumes_its_session(self):
+        flaky = [PY, "-c", "import sys; print('session_id: s-first'); sys.exit('segfault in tool')"]
+        agents = {"alpha": {"cmd": flaky, "cmd_resume": RESUME, "session": r"^session_id: (\S+)$"}}
+        t = board.add(self.conn, "flaky", to="alpha", strict=True)
+        self.dispatch(agents)  # fails, then retries by resuming the session the failed run left
+        self.assertEqual(db.get(self.conn, t)["result"], "continued s-first")
+
+    def test_edit_tasks_resume_only_with_cmd_edit_resume(self):
+        first = board.add(self.conn, "first", to="alpha")
+        agents = {"alpha": dict(SESSIONED, cmd_edit=FRESH)}
+        self.dispatch(agents)
+        second = board.add(self.conn, "edit follow-up", follows=first, edit=True)
+        self.dispatch(agents)
+        self.assertTrue(db.get(self.conn, second)["result"].startswith("fresh answer"))
+        third = board.add(self.conn, "edit again", follows=first, edit=True)
+        self.dispatch({"alpha": dict(SESSIONED, cmd_edit=FRESH, cmd_edit_resume=RESUME)})
+        self.assertTrue(db.get(self.conn, third)["result"].startswith("continued s-"))
+
+    def test_session_from_json_output(self):
+        agent = {"cmd": [PY, "-c", "import json; print(json.dumps(dict(result='hi', session_id='abc-123')))"],
+                 "reply": "json:result", "session": r'"session_id":\s*"([^"]+)"'}
+        t = board.add(self.conn, "json", to="alpha")
+        self.dispatch({"alpha": agent})
+        self.assertEqual((db.get(self.conn, t)["result"], self.session_of(t)[1]), ("hi", "abc-123"))
+
+    def test_follow_needs_an_existing_task(self):
+        with self.assertRaises(SystemExit):
+            with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stderr(io.StringIO()):
+                cli.main(["add", "x", "--follow", "t_missing"])
+
+    def test_old_board_gains_the_follows_column(self):
+        path = Path(self.tmp.name) / "old.db"
+        old = sqlite3.connect(path)
+        old.executescript(db.SCHEMA.replace("    follows       TEXT,\n", ""))
+        old.close()
+        conn = db.connect(str(path))
+        self.addCleanup(conn.close)
+        cols = {c["name"] for c in conn.execute("PRAGMA table_info(tasks)")}
+        self.assertIn("follows", cols)
+
+    def test_strict_follow_needs_no_to(self):
+        first = board.add(self.conn, "first", to="alpha")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stdout(out):
+            cli.main(["add", "follow-up", "--follow", first, "--strict"])
+        task = db.get(self.conn, out.getvalue().strip())
+        self.assertEqual((task["assignee"], task["strict"], task["follows"]), ("alpha", 1, first))

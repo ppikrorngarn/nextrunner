@@ -21,6 +21,8 @@ def print_task(conn, task):
     may = "edit files in its folder" if task["edit"] else "read only"
     print(f"  may:      {may}{'; the dispatcher commits the changes' if task['commit_changes'] else ''}")
     print(f"  folder:   {task['cwd'] or '-'}")
+    if task["follows"]:
+        print(f"  follows:  {task['follows']}")
     print(f"  attempts: {task['attempts']}")
     if task["body"]:
         print(f"\n{task['body']}")

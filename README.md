@@ -185,6 +185,34 @@ takes longer than `--timeout` seconds.
 Optional keys:
 
 - `parallel`: how many tasks this agent may run at once (default 1).
+- `session`: a regular expression whose first group is the agent's session
+  or conversation ID in its output (stdout, then stderr). With `reply:
+  stdout`, the reply is the text after the line where the ID was found.
+- `cmd_resume` and `cmd_edit_resume`: the commands that continue a saved
+  session, with `{session}` as its ID. Give them the same limits as `cmd`
+  and `cmd_edit`, and check that the program keeps those limits when it
+  resumes; some restore the old session's settings unless told otherwise.
+
+## Sessions and follow-ups
+
+For an agent with a `session` pattern, the dispatcher saves the session ID
+after each run as a `session` event on the task. The next run continues it
+instead of starting fresh when:
+
+- the task goes back to the same agent, for example after a failure; or
+- the task was added with `--follow ID`, which also takes the earlier
+  task's agent and folder unless you give `--to` or `--cwd`:
+
+```bash
+nextrunner add "Now add tests for it" --follow t_0e8ea7858s --edit
+```
+
+If the agent has no resume command for that level, or the follow-up goes to
+another agent, the run starts fresh and the prompt includes the earlier
+task's result instead. Any command placeholder is filled with
+`str.format`, so a literal `{` or `}` in a command must be doubled.
+
+`agents.json` lives outside the repo, because it describes your own setup.
 
 ## Safety
 

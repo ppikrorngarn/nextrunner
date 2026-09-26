@@ -56,6 +56,8 @@ def main(argv=None):
     sp.add_argument("--edit", action="store_true", help="let the agent change files in that folder (default: read-only)")
     sp.add_argument("--commit", action="store_true",
                     help="implies --edit: when the agent finishes, the dispatcher commits the files it changed (never pushes)")
+    sp.add_argument("--follow", metavar="ID",
+                    help="continue task ID's conversation: same agent and folder, resuming its session if it has one")
     sp.add_argument("--by", default=ME)
     sp = cmd("list", "list tasks")
     sp.add_argument("--all", action="store_true", help="include done tasks")
@@ -99,8 +101,8 @@ def main(argv=None):
     if a.cmd == "dispatch" and a.jobs < 1:
         p.error("--jobs must be 1 or more")
     if a.cmd == "add":
-        if a.strict and not a.to:
-            p.error("--strict needs --to")
+        if a.strict and not (a.to or a.follow):
+            p.error("--strict needs --to or --follow")
     conn = connect()
 
     def need(ok, message):
@@ -108,7 +110,8 @@ def main(argv=None):
             sys.exit(f"refused: {message}")
 
     if a.cmd == "add":
-        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit, a.commit))
+        need(a.follow is None or get(conn, a.follow), f"no task {a.follow}")
+        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit, a.commit, a.follow))
     elif a.cmd == "list":
         clauses, params = [], {}
         if not a.all:

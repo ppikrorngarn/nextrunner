@@ -26,6 +26,30 @@
     ],
     "reply": "file"
   },
+  "agent-b": {
+    "cmd": [
+      "agent-b-cli",
+      "--print",
+      "{prompt}",
+      "--output-format",
+      "json",
+      "--allow",
+      "read"
+    ],
+    "reply": "json:result",
+    "session": "\"session_id\":\\s*\"([^\"]+)\"",
+    "cmd_resume": [
+      "agent-b-cli",
+      "--print",
+      "{prompt}",
+      "--output-format",
+      "json",
+      "--allow",
+      "read",
+      "--resume",
+      "{session}"
+    ]
+  },
   "agent-c": {
     "cmd": [
       "agent-c-cli",

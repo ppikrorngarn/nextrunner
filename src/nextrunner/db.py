@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     strict        INTEGER NOT NULL DEFAULT 0,
     edit          INTEGER NOT NULL DEFAULT 0,
     commit_changes INTEGER NOT NULL DEFAULT 0,
+    follows       TEXT,
     status        TEXT NOT NULL DEFAULT 'ready'
                   CHECK (status IN ('ready', 'running', 'done', 'blocked')),
     claimed_by    TEXT,
@@ -70,6 +71,8 @@ def connect(path=None):
             conn.execute("ALTER TABLE tasks ADD COLUMN claim_token TEXT")  # board made before claim tokens
         if "commit_changes" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN commit_changes INTEGER NOT NULL DEFAULT 0")  # before --commit
+        if "follows" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN follows TEXT")  # board made before --follow
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 

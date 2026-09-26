@@ -4,10 +4,10 @@ from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
-from .agents import COOLDOWN_MIN, LIMIT_RE, command_for, limit_reason, load_agents, pick_agent, set_down
-from .board import claim, done, release
+from .agents import COOLDOWN_MIN, LIMIT_RE, limit_reason, load_agents, pick_agent, set_down
+from .board import claim, done, last_session, release
 from .db import CLAIMABLE, get, log, now, tx
-from .runner import build_prompt, commit_changes, git_snapshot, run_agent
+from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent
 
 def say_now(text):
     """Print and flush, so a log file shows each line as it happens."""
@@ -67,8 +67,12 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
                     continue  # someone else took it first
                 say(f"{task_id} -> {agent}")
                 before = git_snapshot(cwd) if task["commit_changes"] else None
-                future = pool.submit(run_agent, command_for(spec, task), spec.get("reply", "stdout"),
-                                     build_prompt(conn, task, agent, cwd), cwd, board, timeout)
+                cmd, session = command_and_session(conn, task, agent, spec)
+                if session:
+                    say(f"{task_id} resumes {agent} session {session}")
+                future = pool.submit(run_agent, cmd, spec.get("reply", "stdout"),
+                                     build_prompt(conn, task, agent, cwd, resuming=bool(session)), cwd, board,
+                                     timeout, session, spec.get("session"))
                 running[future] = (task_id, agent, token, before)
                 busy[agent] += 1
             if not running:
@@ -77,9 +81,12 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
             for future in finished:
                 task_id, agent, token, before = running.pop(future)
                 try:
-                    ok, text = future.result()
+                    ok, text, session = future.result()
                 except Exception as err:  # a bug in the run itself counts as a failed run
-                    ok, text = False, f"dispatcher error: {err}"
+                    ok, text, session = False, f"dispatcher error: {err}", None
+                with tx(conn):
+                    if session and session != last_session(conn, task_id, agent)[1]:
+                        log(conn, task_id, agent, "session", session)
                 if ok:
                     if done(conn, task_id, agent, text, token):
                         say(f"{task_id} done by {agent}")

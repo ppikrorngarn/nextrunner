@@ -3,7 +3,7 @@ import os
 import secrets
 import sqlite3
 
-from .db import CLAIMABLE, log, now, tx
+from .db import CLAIMABLE, get, log, now, tx
 
 ME = os.environ.get("NEXTRUNNER_AGENT", "human")
 
@@ -24,8 +24,15 @@ def new_task_id(t=None):
     return "t_" + stamp + "".join(secrets.choice(ID_ALPHABET) for _ in range(4))
 
 
-def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False, commit=False):
+def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False, commit=False, follows=None):
     edit = edit or commit  # committing the changes only makes sense if the agent may make them
+    if follows:
+        earlier = get(conn, follows)
+        if earlier is None:
+            raise ValueError(f"no task {follows}")
+        # Continue with the agent that last ran the earlier task, in the same folder, unless told otherwise.
+        to = to or last_session(conn, follows)[0] or earlier["claimed_by"] or earlier["assignee"]
+        cwd = cwd or earlier["cwd"]
     level = "edit, commit" if commit else "edit" if edit else "read-only"
     for attempt in range(5):
         t = now()
@@ -33,11 +40,12 @@ def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False
         try:
             with tx(conn):
                 conn.execute(
-                    "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, "
-                    "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), by, t, t),
+                    "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, follows, "
+                    "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), follows, by, t, t),
                 )
-                log(conn, task_id, by, "created", f"to={to or 'anyone'}{' (strict)' if strict else ''}, {level}")
+                log(conn, task_id, by, "created", f"to={to or 'anyone'}{' (strict)' if strict else ''}, {level}"
+                    f"{f', follows {follows}' if follows else ''}")
             return task_id
         except sqlite3.IntegrityError:
             if attempt == 4:
@@ -120,3 +128,11 @@ def reopen(conn, task_id, by=ME):
             conn.execute("UPDATE events SET kind = 'failed-before-reopen' WHERE task_id = ? AND kind = 'failed'", (task_id,))
             log(conn, task_id, by, "reopened")
     return ok
+
+
+def last_session(conn, task_id, agent=None):
+    """(agent, session ID) of the latest run on a task that left one, or (None, None)."""
+    row = conn.execute(
+        "SELECT agent, text FROM events WHERE task_id = ? AND kind = 'session' AND (? IS NULL OR agent = ?) "
+        "ORDER BY id DESC LIMIT 1", (task_id, agent, agent)).fetchone()
+    return (row["agent"], row["text"]) if row else (None, None)
