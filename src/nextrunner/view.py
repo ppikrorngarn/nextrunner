@@ -63,6 +63,7 @@ def board_view(conn, stale_min=15, show_all=False):
     tasks = conn.execute(
         "SELECT t.*, (SELECT MAX(at) FROM events e WHERE e.task_id = t.id) AS last_at FROM tasks t "
         f"{where} ORDER BY status IN {FINISHED}, created_at, rowid", {"since": t - 3600}).fetchall()
+    id_width = max((len(task["id"]) for task in tasks), default=0)  # old and new IDs differ in length
     counts, rows = {}, []
     for task in tasks:
         state = shown_status(task)
@@ -70,7 +71,7 @@ def board_view(conn, stale_min=15, show_all=False):
             state = "STALE"  # holds a claim but has said nothing for a while
         counts[state] = counts.get(state, 0) + 1
         who, level, last, left = row_cells(task, state, t)
-        head = f"{task['id']}  {state:<8} {who:<14} {level:<6} {last:<9} {left:<9} "
+        head = f"{task['id']:<{id_width}}  {state:<8} {who:<14} {level:<6} {last:<9} {left:<9} "
         rows.append((task, state, head))
     recent = "" if show_all else " in the last hour"
     summary = ", ".join(f"{counts[k]} {k.lower() if k != 'done' else k + recent}"

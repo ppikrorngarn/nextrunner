@@ -115,10 +115,11 @@ def main(argv=None):
             clauses.append(f"status NOT IN {FINISHED}")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         tasks = conn.execute(f"SELECT * FROM tasks {where} ORDER BY created_at, rowid", params).fetchall()
+        id_width = max((len(t["id"]) for t in tasks), default=0)
         for t in tasks:
             who = t["claimed_by"] if t["status"] == "running" else (t["assignee"] or "anyone")
             level = "commit" if t["commit_changes"] else "edit" if t["edit"] else "read"
-            print(f"{t['id']}  {shown_status(t):<8} {who:<14} {level:<6} {t['title']}")
+            print(f"{t['id']:<{id_width}}  {shown_status(t):<8} {who:<14} {level:<6} {t['title']}")
     elif a.cmd == "show":
         task = get(conn, a.id)
         need(task, f"no task {a.id}")

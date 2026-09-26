@@ -626,6 +626,21 @@ class TaskIdTest(Base):
         self.assertTrue(board.claim(self.conn, "t_32d225ac", "alpha"))
 
 
+class ColumnsTest(Base):
+    def test_old_and_new_ids_line_up(self):
+        self.conn.execute("INSERT INTO tasks (id, title, created_by, created_at, updated_at) "
+                          "VALUES ('t_32d225ac', 'old', 'human', ?, ?)", (db.now(), db.now()))
+        self.conn.execute("INSERT INTO events (task_id, at, agent, kind) VALUES ('t_32d225ac', ?, 'human', 'created')",
+                          (db.now(),))
+        board.add(self.conn, "new")
+        rows = [l for l in view.render_status(self.conn, width=200).splitlines() if l.startswith("t_")]
+        self.assertEqual(len({row.index("ready") for row in rows}), 1)
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stdout(out):
+            cli.main(["list"])
+        self.assertEqual(len({row.index("ready") for row in out.getvalue().splitlines()}), 1)
+
+
 def crowd(size, limit):
     """Marks itself running, waits up to 1.5 s until `size` runs are going, fails if more than `limit` run at once."""
     code = ("import os, sys, time, secrets; d = os.path.join(sys.argv[1], 'crowd'); os.makedirs(d, exist_ok=True)\n"
