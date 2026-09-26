@@ -89,7 +89,8 @@ def main(argv=None):
     sp.add_argument("name")
     sp = cmd("dispatch", "start agents for free tasks")
     sp.add_argument("--loop", type=float, metavar="SECONDS", help="keep running, one pass every SECONDS")
-    sp.add_argument("--timeout", type=int, default=600, help="seconds one agent run may take (default 600)")
+    sp.add_argument("--timeout", type=int, default=600,
+                    help="seconds one agent run may take unless the agent sets its own \"timeout\" (default 600)")
     sp.add_argument("--jobs", type=int, default=1, metavar="N",
                     help="run up to N tasks at once; one agent runs one at a time unless it sets \"parallel\" (default 1)")
     sp.add_argument("--dry-run", action="store_true")

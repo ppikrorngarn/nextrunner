@@ -475,6 +475,30 @@ EDITOR = {"cmd_edit": [PY, "-c", (
     "cmd": [PY, "-c", "print('read only')"]}
 
 
+class TimeoutTest(Base):
+    SLOW = {"cmd": [PY, "-c", "import time; time.sleep(3); print('slow but fine')"]}
+
+    def test_agent_timeout_replaces_the_default(self):
+        t = board.add(self.conn, "slow agent", to="slow", strict=True)
+        dispatcher.dispatch(self.conn, agents={"slow": {**self.SLOW, "timeout": 10}}, timeout=1, say=lambda l: None)
+        self.assertEqual((self.status(t), db.get(self.conn, t)["result"]), ("done", "slow but fine"))
+        claimed = next(e for e in self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'claimed'", (t,)))
+        self.assertEqual(claimed["text"], "for 70s")  # the claim lasts a minute longer than the agent's timeout
+
+    def test_default_applies_without_an_agent_timeout(self):
+        t = board.add(self.conn, "slow agent", to="slow", strict=True)
+        dispatcher.dispatch(self.conn, agents={"slow": self.SLOW}, timeout=1, say=lambda l: None)
+        failed = [e["text"] for e in self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'failed'", (t,))]
+        self.assertEqual(failed[0], "timed out after 1s")
+
+    def test_other_agents_keep_the_default(self):
+        t = board.add(self.conn, "quick agent", to="quick", strict=True)
+        dispatcher.dispatch(self.conn, agents={"slow": {**self.SLOW, "timeout": 10}, "quick": OK}, timeout=5,
+                            say=lambda l: None)
+        claimed = next(e for e in self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'claimed'", (t,)))
+        self.assertEqual(claimed["text"], "for 65s")
+
+
 class CommitTest(Base):
     def setUp(self):
         super().setUp()

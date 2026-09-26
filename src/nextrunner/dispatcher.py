@@ -26,6 +26,9 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
     setting (default 1) on one agent. Only the agent runs happen in worker
     threads; every board read and write stays on this thread and this
     connection, so claims, tokens and rests work as they do with one job.
+
+    `timeout` is the default for one run; an agent's own "timeout" in
+    agents.json wins.
     """
     agents = agents or load_agents()
     board = Path(conn.execute("PRAGMA database_list").fetchone()["file"]).parent
@@ -62,7 +65,8 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
                     say(f"{task_id} would go to {agent}")
                     continue
                 spec, cwd = agents[agent], task["cwd"] or str(board)
-                token = claim(conn, task_id, agent, ttl=timeout + 60, steal=True)
+                limit = spec.get("timeout", timeout)
+                token = claim(conn, task_id, agent, ttl=limit + 60, steal=True)
                 if not token:
                     continue  # someone else took it first
                 say(f"{task_id} -> {agent}")
@@ -72,7 +76,7 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
                     say(f"{task_id} resumes {agent} session {session}")
                 future = pool.submit(run_agent, cmd, spec.get("reply", "stdout"),
                                      build_prompt(conn, task, agent, cwd, resuming=bool(session)), cwd, board,
-                                     timeout, session, spec.get("session"))
+                                     limit, session, spec.get("session"))
                 running[future] = (task_id, agent, token, before)
                 busy[agent] += 1
             if not running:
