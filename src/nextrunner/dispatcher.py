@@ -1,4 +1,5 @@
 """The dispatcher: one pass over the board, starting an agent for every free task."""
+import sys
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -8,6 +9,11 @@ from .agents import COOLDOWN_MIN, LIMIT_RE, limit_reason, load_agents, pick_agen
 from .board import claim, done, last_session, release
 from .db import CLAIMABLE, get, log, now, tx
 from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent
+
+def self_command():
+    """The command that starts this program again: the bundled app itself, or python -m nextrunner."""
+    return [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "nextrunner"]
+
 
 def say_now(text):
     """Print and flush, so a log file shows each line as it happens."""

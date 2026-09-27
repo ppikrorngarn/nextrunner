@@ -1,16 +1,16 @@
 """Where nextrunner keeps its files, and how to point it somewhere else.
 
-Two files: the board (board.db) and the agent settings (agents.json). Each
-is found the first way that applies:
+Three files: the board (board.db), the agent settings (agents.json) and the
+dispatcher log (dispatch.log). Each is found the first way that applies:
 
-1. its own variable: NEXTRUNNER_DB, NEXTRUNNER_AGENTS
-2. NEXTRUNNER_HOME, one folder that holds both
+1. its own variable: NEXTRUNNER_DB, NEXTRUNNER_AGENTS, NEXTRUNNER_LOG
+2. NEXTRUNNER_HOME, one folder that holds all three (also `nextrunner --home DIR`)
 3. the usual place for the platform:
 
-    macOS    ~/Library/Application Support/nextrunner
-    Linux    $XDG_CONFIG_HOME/nextrunner (agents.json), $XDG_DATA_HOME/nextrunner (board.db);
-             defaults ~/.config, ~/.local/share
-    Windows  %APPDATA%\\nextrunner (agents.json), %LOCALAPPDATA%\\nextrunner (board.db)
+    macOS    ~/Library/Application Support/nextrunner  (log in ~/Library/Logs/nextrunner)
+    Linux    $XDG_CONFIG_HOME/nextrunner (agents.json), $XDG_DATA_HOME/nextrunner (board.db),
+             $XDG_STATE_HOME/nextrunner (dispatch.log); defaults ~/.config, ~/.local/share, ~/.local/state
+    Windows  %APPDATA%\\nextrunner (agents.json), %LOCALAPPDATA%\\nextrunner (board.db, dispatch.log)
 
 Use NEXTRUNNER_HOME to develop or try things out without touching the real board.
 """
@@ -55,3 +55,27 @@ def agents_file():
 
 def db_file():
     return _pick("NEXTRUNNER_DB", "board.db", 1)
+
+
+def log_file():
+    """The dispatcher log. With only NEXTRUNNER_DB set, it sits next to that board so a trial run stays in one folder."""
+    explicit, db = os.environ.get("NEXTRUNNER_LOG"), os.environ.get("NEXTRUNNER_DB")
+    if not explicit and db and not os.environ.get("NEXTRUNNER_HOME"):
+        return Path(db).expanduser().parent / "dispatch.log"
+    return _pick("NEXTRUNNER_LOG", "dispatch.log", 2)
+
+
+def describe():
+    """[(label, path, why)] for `nextrunner where`: each file and the setting that put it there."""
+    def why(var):
+        if os.environ.get(var):
+            return var
+        return "NEXTRUNNER_HOME" if os.environ.get("NEXTRUNNER_HOME") else "platform default"
+    return [("board", db_file(), why("NEXTRUNNER_DB")),
+            ("agents", agents_file(), why("NEXTRUNNER_AGENTS")),
+            ("log", log_file(), why("NEXTRUNNER_LOG"))]
+
+
+def is_sandboxed():
+    """True when any of the variables above moved a file away from the platform default."""
+    return any(os.environ.get(v) for v in ("NEXTRUNNER_HOME", "NEXTRUNNER_DB", "NEXTRUNNER_AGENTS", "NEXTRUNNER_LOG"))

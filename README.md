@@ -17,6 +17,7 @@ Clone it, then `uv tool install -e .` gives you an
 ## Quick start
 
 ```bash
+nextrunner where                           # which files it uses; see "Where the files live"
 cp agents.example.json agents.json          # then describe your own agents in it
 export NEXTRUNNER_AGENTS="$PWD/agents.json"
 nextrunner add "Summarise the open issues" --body "Details here"
@@ -31,6 +32,29 @@ the last hour, how long ago each one last had an event, how much claim time
 is left, which agents are resting, and the five latest events. A running task
 with no event for 15 minutes is marked `STALE` (change it with `--stale
 MINUTES`). It is plain text, so agents and scripts can read it.
+
+## Where the files live
+
+`nextrunner where` prints them. Each is found the first way that applies: its own variable
+(`NEXTRUNNER_DB`, `NEXTRUNNER_AGENTS`, `NEXTRUNNER_LOG`), then `NEXTRUNNER_HOME` (one folder for all three, or
+`nextrunner --home DIR ...`), then the platform default:
+
+| | `agents.json` | `board.db` | `dispatch.log` |
+|---|---|---|---|
+| macOS | `~/Library/Application Support/nextrunner` | same | `~/Library/Logs/nextrunner` |
+| Linux | `$XDG_CONFIG_HOME/nextrunner` (`~/.config`) | `$XDG_DATA_HOME/nextrunner` (`~/.local/share`) | `$XDG_STATE_HOME/nextrunner` (`~/.local/state`) |
+| Windows | `%APPDATA%\nextrunner` | `%LOCALAPPDATA%\nextrunner` | same as the board |
+
+## Trying things out without touching your real board
+
+```bash
+. dev/env.sh                     # NEXTRUNNER_HOME=.sandbox, with two fake agents that cost nothing
+nextrunner add "try it" --to agent-a   # put [fail], [limit] or [slow] in a title to make the fake agent misbehave
+nextrunner dispatch && nextrunner list --all
+```
+
+Delete `.sandbox/` to start over. The tests do the same on their own: `tests/__init__.py`
+points `NEXTRUNNER_HOME` at a temporary folder before anything runs.
 
 ## Working the board by hand
 
@@ -133,18 +157,6 @@ The outcome is a `commit` event on the task (`nextrunner show <id>`). Two
 `--commit` tasks in the same repository at the same time (`--jobs` above 1)
 can pick up each other's files, so run those one at a time.
 
-### Trying it with a fake agent
-
-`dev/fake_agent.py` answers without spending tokens. Point the board and
-`agents.json` at `/tmp` so your real board is left alone, then put `[fail]`,
-`[limit]` or `[slow]` in a task's title to make the fake agent misbehave:
-
-```bash
-echo '{"fake": {"cmd": ["python3", "'"$PWD"'/dev/fake_agent.py", "{prompt}"]}}' > /tmp/nextrunner-agents.json
-export NEXTRUNNER_DB=/tmp/nextrunner-board.db NEXTRUNNER_AGENTS=/tmp/nextrunner-agents.json
-nextrunner add "try it" && nextrunner dispatch && nextrunner list --all
-```
-
 ## agents.json
 
 Key order is the failover order.
@@ -180,11 +192,15 @@ Placeholders: `{prompt}` is the task text, `{cwd}` the task's folder,
   `is_error` field counts as a failure.
 
 A run fails when the exit code is not zero, the reply is empty, or the run
-takes longer than `--timeout` seconds.
+takes longer than the agent's `timeout`, or else `--timeout`, seconds.
 
 Optional keys:
 
 - `parallel`: how many tasks this agent may run at once (default 1).
+- `timeout`: seconds one run of this agent may take. It replaces
+  `dispatch --timeout` for this agent, and the claim lasts a minute longer
+  than it. Give a slow agent its own, for example `"timeout": 1800`,
+  instead of raising the default for everyone.
 - `session`: a regular expression whose first group is the agent's session
   or conversation ID in its output (stdout, then stderr). With `reply:
   stdout`, the reply is the text after the line where the ID was found.
