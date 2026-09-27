@@ -10,6 +10,7 @@ from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
 from .board import ME, add, beat, claim, claim_next, done, note, release, reopen
 from .db import connect, get
 from .dispatcher import dispatch
+from .setup import doctor, init
 from . import paths
 from .view import FINISHED, print_task, render_status, shown_status, stamp
 
@@ -27,7 +28,7 @@ Agents with a shell can also work the board themselves:
     nextrunner done <id> --as NAME --result "..."
 
 The dispatcher learns how to start each agent from agents.json (see
-agents.example.json). Agent names are free text; the board does not care.
+`nextrunner init` writes a template). Agent names are free text; the board does not care.
 
 A task is read-only unless it was added with --edit. Each agent has one
 command for read tasks and, if you trust it with changes, a second one for
@@ -99,6 +100,11 @@ def main(argv=None):
     sp = cmd("status", "print the board as text: open tasks, resting agents, latest events (for agents and scripts)")
     sp.add_argument("--stale", type=float, default=15, metavar="MINUTES",
                     help="flag a running task with no event for this long (default 15)")
+    sp = cmd("init", "write a starter agents.json (a template, or your own agents with --agent)")
+    sp.add_argument("--agent", action="append", default=[], metavar="NAME='COMMAND'",
+                    help="describe one agent that answers on stdout, for example --agent mybot='mybot run'; repeatable")
+    sp.add_argument("--force", action="store_true", help="replace an existing agents.json")
+    cmd("doctor", "check agents.json: programs exist, placeholders and reply modes are valid")
     cmd("where", "show which files nextrunner is using, and why")
 
     a = p.parse_args(argv)
@@ -113,6 +119,13 @@ def main(argv=None):
         for label, path, why in paths.describe():
             print(f"{label:<7} {path}  ({why}){'' if path.exists() else '  [not created yet]'}")
         return
+    if a.cmd == "init":
+        print("\n".join(init(a.agent, a.force)))
+        return
+    if a.cmd == "doctor":
+        lines, errors = doctor()
+        print("\n".join(lines))
+        sys.exit(1 if errors else 0)
     conn = connect()
 
     def need(ok, message):

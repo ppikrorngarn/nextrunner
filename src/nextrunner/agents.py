@@ -43,7 +43,7 @@ def load_agents():
     """
     path = paths.agents_file()
     if not path.exists():
-        sys.exit(f"no {path}: copy agents.example.json and describe your agents")
+        sys.exit(f"no {path}: run `nextrunner init` to write one, then describe your agents")
     return json.loads(path.read_text())
 
 

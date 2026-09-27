@@ -12,19 +12,19 @@ The board and dispatcher use only the standard library. Needs Python 3.10 or new
 ## Install
 
 Clone it, then `uv tool install -e .` gives you an
-`nextrunner` command that follows your checkout.
+`nextrunner` command that follows your checkout. Then `nextrunner init`
+writes a starter `agents.json` where nextrunner looks for it.
 
 ## Quick start
 
 ```bash
 nextrunner where                           # which files it uses; see "Where the files live"
-cp agents.example.json agents.json          # then describe your own agents in it
-export NEXTRUNNER_AGENTS="$PWD/agents.json"
+nextrunner init                            # writes a starter agents.json; edit it (or: nextrunner init --agent mybot='mybot run')
+nextrunner doctor                          # checks that every agent's program exists and the settings make sense
 nextrunner add "Summarise the open issues" --body "Details here"
 nextrunner dispatch
 nextrunner list --all
 nextrunner status               # the board as text
-nextrunner show <id>
 ```
 
 `status` prints open tasks and tasks finished in
