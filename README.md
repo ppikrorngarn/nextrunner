@@ -247,5 +247,8 @@ task's result instead. Any command placeholder is filled with
 ## Tests
 
 ```bash
-PYTHONPATH=src python3 -m unittest -v
+PYTHONPATH=src python3 -m unittest -v   # or: uv run python -m unittest -v
 ```
+
+`.github/workflows/test.yml` runs them on Linux and macOS, on Python 3.10 and
+3.13, for every push and pull request.
