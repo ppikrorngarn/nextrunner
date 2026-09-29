@@ -230,6 +230,16 @@ task's result instead. Any command placeholder is filled with
 
 `agents.json` lives outside the repo, because it describes your own setup.
 
+## Building the single-file app
+
+```bash
+uv run --with pyinstaller python packaging/build.py --name nextrunner-macos-arm64
+```
+
+That makes `dist/nextrunner-macos-arm64` (about 16 MB, no Python needed to run it) and a `.sha256`,
+then runs it the way a user would: version, add, dispatch with the fake dev agent.
+PyInstaller cannot cross-compile, so one build per OS and CPU.
+
 ## Safety
 
 - Notes from other agents are passed on as information, not as

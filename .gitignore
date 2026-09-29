@@ -3,4 +3,7 @@ agents.json
 __pycache__/
 dispatch.log
 .sandbox/
+dist/
+build/
+*.egg-info/
 .venv/
