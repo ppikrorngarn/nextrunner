@@ -3,11 +3,10 @@ import sys
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from pathlib import Path
 
 from .agents import COOLDOWN_MIN, LIMIT_RE, limit_reason, load_agents, pick_agent, set_down
 from .board import claim, done, last_session, release
-from .db import CLAIMABLE, get, log, now, tx
+from .db import CLAIMABLE, board_dir, get, log, now, tx
 from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent
 
 def self_command():
@@ -37,7 +36,7 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
     agents.json wins.
     """
     agents = agents or load_agents()
-    board = Path(conn.execute("PRAGMA database_list").fetchone()["file"]).parent
+    board = board_dir(conn)
     free = conn.execute(f"SELECT id FROM tasks WHERE {CLAIMABLE} ORDER BY created_at, rowid", {"now": now()}).fetchall()
     pending = [row["id"] for row in free]  # oldest first; a failed task goes back to the front
     running = {}                           # future -> (task_id, agent, token, git snapshot)
@@ -80,9 +79,12 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
                 cmd, session = command_and_session(conn, task, agent, spec)
                 if session:
                     say(f"{task_id} resumes {agent} session {session}")
+                attempt = conn.execute("SELECT count(*) FROM events WHERE task_id = ? AND kind = 'claimed'",
+                                       (task_id,)).fetchone()[0]
+                trace = board / "runs" / task_id / f"{attempt}-{agent}.log"
                 future = pool.submit(run_agent, cmd, spec.get("reply", "stdout"),
                                      build_prompt(conn, task, agent, cwd, resuming=bool(session)), cwd, board,
-                                     limit, session, spec.get("session"))
+                                     limit, session, spec.get("session"), trace, spec.get("usage"))
                 running[future] = (task_id, agent, token, before)
                 busy[agent] += 1
             if not running:
@@ -91,10 +93,12 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
             for future in finished:
                 task_id, agent, token, before = running.pop(future)
                 try:
-                    ok, text, session = future.result()
+                    ok, text, session, line = future.result()
                 except Exception as err:  # a bug in the run itself counts as a failed run
-                    ok, text, session = False, f"dispatcher error: {err}", None
+                    ok, text, session, line = False, f"dispatcher error: {err}", None, ""
                 with tx(conn):
+                    if line:
+                        log(conn, task_id, agent, "run", line)
                     if session and session != last_session(conn, task_id, agent)[1]:
                         log(conn, task_id, agent, "session", session)
                 if ok:

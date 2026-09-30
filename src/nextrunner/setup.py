@@ -103,6 +103,20 @@ def check_agents(agents):
                 problems += 1
             if not spec.get("cmd_resume"):
                 add("warn", f"{name}: has a session pattern but no cmd_resume, so sessions are saved and never resumed")
+        usage = spec.get("usage")
+        if usage is not None:
+            if not isinstance(usage, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in usage.items()):
+                add("error", f"{name}: usage must be an object of label: pattern, not {usage!r}")
+                problems += 1
+            else:
+                for label, pattern in usage.items():
+                    try:
+                        if re.compile(pattern).groups < 1:
+                            add("error", f"{name}: usage.{label} needs one (group) that captures the figure")
+                            problems += 1
+                    except re.error as err:
+                        add("error", f"{name}: usage.{label}: bad pattern: {err}")
+                        problems += 1
         timeout = spec.get("timeout")
         if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0):
             add("error", f"{name}: timeout must be a number of seconds above 0, not {timeout!r}")

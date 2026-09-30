@@ -146,7 +146,7 @@ class DispatchTest(Base):
         # While alpha rests, new work goes straight to beta without trying alpha.
         t2 = board.add(self.conn, "next task")
         self.dispatch({"alpha": LIMITED, "beta": OK})
-        self.assertEqual(self.kinds(t2), [("human", "created"), ("beta", "claimed"), ("beta", "done")])
+        self.assertEqual(self.kinds(t2), [("human", "created"), ("beta", "claimed"), ("beta", "run"), ("beta", "done")])
 
     def test_next_agent_sees_what_the_last_one_left(self):
         t = board.add(self.conn, "handoff")
@@ -473,6 +473,63 @@ EDITOR = {"cmd_edit": [PY, "-c", (
     "Path('notes.txt').write_text(Path('notes.txt').read_text() + 'agent line\\n')\n"
     "print('Done the edits.\\nCOMMIT: Add a, change b, drop c')")],
     "cmd": [PY, "-c", "print('read only')"]}
+
+
+class TraceTest(Base):
+    """Every run leaves a `run` event and a trace file with what the agent printed."""
+
+    def runs_dir(self):
+        return Path(self.db_path).parent / "runs"
+
+    def run_event(self, t):
+        return [e["text"] for e in self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'run'", (t,))]
+
+    def test_run_event_and_trace_for_a_good_run(self):
+        noisy = {"cmd": [PY, "-c", "import sys; sys.stderr.write('warming up\\n'); print('the reply')"]}
+        t = board.add(self.conn, "traced", to="alpha")
+        self.dispatch({"alpha": noisy})
+        (line,) = self.run_event(t)
+        self.assertRegex(line, r"^\d+s exit=0 log=.*/runs/" + t + r"/1-alpha\.log$")
+        trace = Path(line.split("log=", 1)[1])
+        text = trace.read_text()
+        self.assertIn("command: " + PY, text)
+        self.assertIn("outcome: done", text)
+        self.assertIn("--- stdout ---\nthe reply", text)
+        self.assertIn("--- stderr ---\nwarming up", text)
+        self.assertEqual(db.get(self.conn, t)["result"], "the reply")  # the reply itself is unchanged
+
+    def test_every_attempt_gets_its_own_trace(self):
+        t = board.add(self.conn, "retried")
+        self.dispatch({"alpha": BROKEN, "beta": OK})
+        lines = self.run_event(t)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("exit=1", lines[0]); self.assertIn("/1-alpha.log", lines[0])
+        self.assertIn("exit=0", lines[1]); self.assertIn("/2-beta.log", lines[1])
+        self.assertIn("outcome: failed", (self.runs_dir() / t / "1-alpha.log").read_text())
+
+    def test_timeout_is_traced_too(self):
+        slow = {"cmd": [PY, "-c", "import time; print('partial'); time.sleep(5)"]}
+        t = board.add(self.conn, "slow", to="alpha", strict=True)
+        dispatcher.dispatch(self.conn, agents={"alpha": slow}, timeout=1, say=lambda l: None)
+        line = self.run_event(t)[0]
+        self.assertIn("exit=-", line)
+        self.assertIn("outcome: timed out after 1s", (self.runs_dir() / t / "1-alpha.log").read_text())
+
+    def test_usage_figures_from_the_output(self):
+        agent = {"cmd": [PY, "-c", "import json; print(json.dumps(dict(result='hi', total_cost_usd=0.0312, num_turns=7)))"],
+                 "reply": "json:result",
+                 "usage": {"cost": r'"total_cost_usd":\s*([0-9.]+)', "turns": r'"num_turns":\s*(\d+)'}}
+        t = board.add(self.conn, "costly", to="alpha")
+        self.dispatch({"alpha": agent})
+        self.assertIn(" exit=0 cost=0.0312 turns=7 log=", self.run_event(t)[0])
+        self.assertEqual(runner.usage_line({"cost": r"nothing-(\d+)"}, "no match here"), "")
+
+    def test_show_prints_the_run_event(self):
+        t = board.add(self.conn, "shown", to="alpha")
+        self.dispatch({"alpha": OK})
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["show", t])
+        self.assertRegex(out.getvalue(), r"alpha\s+run\s+\d+s exit=0 log=")
 
 
 class TimeoutTest(Base):

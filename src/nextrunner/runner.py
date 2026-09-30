@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from .agents import command_for
@@ -59,18 +60,53 @@ def command_and_session(conn, task, agent, spec):
     return command_for(spec, task), None
 
 
-def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=None):
-    """Start one agent and wait. Returns (ok, reply or error text, session ID or None)."""
+def write_trace(path, cmd, cwd, started, mono, proc, outcome):
+    """Keep everything a run printed, with how it was started and how it ended, for reading later."""
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        head = [f"command: {' '.join(cmd)}", f"cwd: {cwd}",
+                f"started: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started))}",
+                f"outcome: {outcome}", f"seconds: {time.monotonic() - mono:.0f}"]
+        streams = [("stdout", getattr(proc, "stdout", None)), ("stderr", getattr(proc, "stderr", None))]
+        body = "".join(f"\n--- {name} ---\n{text if isinstance(text, str) else (text or b'').decode(errors='replace')}"
+                       for name, text in streams)
+        path.write_text("\n".join(head) + "\n" + body)
+    except OSError:
+        pass  # a missing trace must never fail the run
+
+
+def usage_line(spec_usage, text):
+    """'cost=0.03 turns=7' from an agent's "usage" patterns ({label: regex with one group}) and its output."""
+    parts = []
+    for label, pattern in (spec_usage or {}).items():
+        match = re.search(pattern, text or "", re.M)
+        if match:
+            parts.append(f"{label}={match.group(1) if match.groups() else match.group(0)}")
+    return " ".join(parts)
+
+
+def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=None, trace=None, usage=None):
+    """Start one agent and wait. Returns (ok, reply or error text, session ID or None, run line).
+
+    The run line says how the run went, for the board: seconds, exit code,
+    any "usage" figures, and the trace file. `trace` is where both output
+    streams are kept, or None to keep nothing.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "reply.txt"
         cmd = [part.format(prompt=prompt, cwd=cwd, out=out, board=board, session=session or "") for part in cmd]
+        started, mono = time.time(), time.monotonic()
         try:
             proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
                                   timeout=timeout, stdin=subprocess.DEVNULL)
-        except subprocess.TimeoutExpired:
-            return False, f"timed out after {timeout}s", session
+        except subprocess.TimeoutExpired as err:
+            write_trace(trace, cmd, cwd, started, mono, err, f"timed out after {timeout}s")
+            return False, f"timed out after {timeout}s", session, run_line(mono, None, "", trace)
         except OSError as err:
-            return False, str(err), session
+            write_trace(trace, cmd, cwd, started, mono, None, str(err))
+            return False, str(err), session, run_line(mono, None, "", trace)
         ok, reply = proc.returncode == 0, proc.stdout.strip()
         found = None
         if session_re:
@@ -89,12 +125,24 @@ def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=N
             except ValueError:
                 ok = False
     found = found or session
+    line = run_line(mono, proc.returncode, usage_line(usage, proc.stdout + "\n" + proc.stderr), trace)
     if ok and reply:
-        return True, reply, found
+        write_trace(trace, cmd, cwd, started, mono, proc, "done")
+        return True, reply, found, line
     # Show both streams: one agent prints noise on stderr and its real error as JSON on stdout.
     # The tail is kept, and the board's limit check reads this text, so the error must not be lost.
     detail = "\n".join(part for part in (proc.stderr.strip(), reply or proc.stdout.strip()) if part)
-    return False, (detail or f"exit code {proc.returncode}")[-2000:], found
+    write_trace(trace, cmd, cwd, started, mono, proc, "failed" if proc.returncode else "empty reply")
+    return False, (detail or f"exit code {proc.returncode}")[-2000:], found, line
+
+
+def run_line(mono, returncode, usage, trace):
+    parts = [f"{time.monotonic() - mono:.0f}s", f"exit={returncode if returncode is not None else '-'}"]
+    if usage:
+        parts.append(usage)
+    if trace is not None:
+        parts.append(f"log={trace}")
+    return " ".join(parts)
 
 
 # ---- commits ----------------------------------------------------------------

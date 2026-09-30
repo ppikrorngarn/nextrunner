@@ -118,6 +118,16 @@ class DoctorTest(unittest.TestCase):
                 self.assertEqual(len(errors), 1)
                 self.assertIn("timeout must be a number of seconds above 0", errors[0])
 
+    def test_usage_patterns_are_checked(self):
+        base = {"cmd": [PY, "{prompt}"]}
+        self.assertEqual(self.errors({"a": dict(base, usage={"cost": r"cost=([0-9.]+)"})}), [])
+        for bad, expected in (("cost=x", "must be an object"), ({"cost": "cost=x"}, "needs one (group)"),
+                              ({"cost": "("}, "bad pattern"), ({"cost": 3}, "must be an object")):
+            with self.subTest(usage=bad):
+                errors = self.errors({"a": dict(base, usage=bad)})
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(expected, errors[0])
+
     def test_doctor_reports_a_missing_file_and_bad_json(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"NEXTRUNNER_HOME": tmp}):
             lines, errors = setup.doctor()

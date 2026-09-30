@@ -167,6 +167,27 @@ The outcome is a `commit` event on the task (`nextrunner show <id>`). Two
 `--commit` tasks in the same repository at the same time (`--jobs` above 1)
 can pick up each other's files, so run those one at a time.
 
+### What a run printed
+
+Every run the dispatcher starts leaves a `run` event on the task: how long
+it took, the exit code, any usage figures, and the path of a trace file
+holding everything the agent printed on both streams, with the command and
+folder it was started with. Traces live in `runs/<task id>/<attempt>-<agent>.log`
+next to the board (`nextrunner where` shows the folder). `nextrunner show <id>` prints
+the event; open the file when a reply looks thin or a run failed for no
+clear reason. Nothing deletes them; remove the `runs` folder when you like.
+
+Usage figures come from an optional `usage` key on the agent: an object of
+label to regular expression, each with one group, matched against the
+run's output. For an agent that reports cost and turns as JSON:
+
+```json
+"usage": {"cost": "\"total_cost_usd\":\\s*([0-9.]+)", "turns": "\"num_turns\":\\s*(\\d+)"}
+```
+
+gives `run  41s exit=0 cost=0.0312 turns=7 log=...`. `nextrunner doctor` checks
+the patterns. Figures are whatever the agent reports; nextrunner adds nothing up.
+
 ## agents.json
 
 Key order is the failover order.
@@ -207,6 +228,7 @@ takes longer than the agent's `timeout`, or else `--timeout`, seconds.
 Optional keys:
 
 - `parallel`: how many tasks this agent may run at once (default 1).
+- `usage`: `{label: pattern}`; see "What a run printed".
 - `timeout`: seconds one run of this agent may take. It replaces
   `dispatch --timeout` for this agent, and the claim lasts a minute longer
   than it. Give a slow agent its own, for example `"timeout": 1800`,

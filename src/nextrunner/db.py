@@ -95,5 +95,10 @@ def log(conn, task_id, agent, kind, text=""):
     )
 
 
+def board_dir(conn):
+    """The folder holding the board file."""
+    return Path(conn.execute("PRAGMA database_list").fetchone()["file"]).parent
+
+
 def get(conn, task_id):
     return conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
