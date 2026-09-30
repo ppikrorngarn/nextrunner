@@ -1,0 +1,50 @@
+# Builds the single-file app on every target and, for a tag like v0.2.0, attaches the files to a GitHub Release.
+# PyInstaller cannot cross-compile, so each target builds on its own runner.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-14, name: nextrunner-macos-arm64}
+          - {os: macos-15-intel, name: nextrunner-macos-x64}
+          - {os: ubuntu-latest, name: nextrunner-linux-x64}
+          - {os: ubuntu-24.04-arm, name: nextrunner-linux-arm64}
+          - {os: windows-latest, name: nextrunner-windows-x64, experimental: true}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental || false }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: Tests
+        run: uv run python -W ignore -m unittest
+      - name: Build and smoke-test the app
+        run: uv run --with pyinstaller python packaging/build.py --name ${{ matrix.name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.name }}*
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes

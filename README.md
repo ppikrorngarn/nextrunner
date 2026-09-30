@@ -7,13 +7,23 @@ file, so any agent can pick up where another stopped. A small dispatcher,
 which is plain code and uses no tokens, starts an agent for each ready task
 and moves the task to another agent when one fails or runs out of tokens.
 
-The board and dispatcher use only the standard library. Needs Python 3.10 or newer.
+The board and dispatcher use only the standard library. Needs Python 3.10 or newer, or use the single-file app from a Release, which needs nothing.
 
 ## Install
 
 Clone it, then `uv tool install -e .` gives you an
 `nextrunner` command that follows your checkout. Then `nextrunner init`
 writes a starter `agents.json` where nextrunner looks for it.
+
+Without Python: download the file for your machine from the latest
+[Release](../../releases) (`nextrunner-macos-arm64`, `nextrunner-macos-x64`,
+`nextrunner-linux-x64`, `nextrunner-linux-arm64`; Windows is untested), make it
+executable, and put it on your PATH. On macOS the first run is blocked
+because the file is not signed; allow it once with:
+
+```bash
+xattr -d com.apple.quarantine ./nextrunner-macos-arm64
+```
 
 ## Quick start
 
@@ -239,6 +249,8 @@ uv run --with pyinstaller python packaging/build.py --name nextrunner-macos-arm6
 That makes `dist/nextrunner-macos-arm64` (about 16 MB, no Python needed to run it) and a `.sha256`,
 then runs it the way a user would: version, add, dispatch with the fake dev agent.
 PyInstaller cannot cross-compile, so one build per OS and CPU.
+`.github/workflows/release.yml` builds macOS arm64 and x64, Linux x64 and arm64, and Windows
+(experimental, untested) on a `v*` tag and attaches them to a GitHub Release.
 
 ## Safety
 
