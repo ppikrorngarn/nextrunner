@@ -4,7 +4,8 @@ import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from .agents import COOLDOWN_MIN, LIMIT_RE, limit_reason, load_agents, pick_agent, set_down
+from .agents import COOLDOWN_MIN, TRANSIENT_HITS, TRANSIENT_MIN, classify, limit_reason, load_agents, pick_agent, \
+    rest_ends, set_down
 from .board import claim, done, last_session, release
 from .db import CLAIMABLE, board_dir, get, log, now, tx
 from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent
@@ -24,7 +25,7 @@ def clock(t):
     return time.strftime("%H:%M", time.localtime(t))
 
 
-def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1):
+def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1, sleep=time.sleep):
     """One pass over the board: run every free task, rerouting when an agent fails.
 
     Up to `jobs` runs go at once in total, and up to each agent's "parallel"
@@ -33,16 +34,22 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
     connection, so claims, tokens and rests work as they do with one job.
 
     `timeout` is the default for one run; an agent's own "timeout" in
-    agents.json wins.
+    agents.json wins. A run that ends with a passing error (the model is at
+    capacity) rests its agent TRANSIENT_MIN minutes, and a task that has no
+    one else to go to waits inside the pass for that rest to end. A quota or
+    login error rests the agent COOLDOWN_MIN minutes, and such a task is left
+    for the next pass.
     """
     agents = agents or load_agents()
     board = board_dir(conn)
     free = conn.execute(f"SELECT id FROM tasks WHERE {CLAIMABLE} ORDER BY created_at, rowid", {"now": now()}).fetchall()
     pending = [row["id"] for row in free]  # oldest first; a failed task goes back to the front
     running = {}                           # future -> (task_id, agent, token, git snapshot)
+    flaky = Counter()                      # passing errors per agent in this pass
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         while pending or running:
             busy = Counter(agent for _, agent, *_ in running.values())
+            wake = None                    # when the earliest short rest a pending task waits on ends
             for task_id in list(pending):
                 if len(running) >= max(1, jobs):
                     break
@@ -54,8 +61,13 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
                 if why == "busy":
                     continue  # its agent is running another task; look again when a run ends
                 if why == "waiting":
+                    back = rest_ends(conn, task, agents)
+                    if back and back - now() <= TRANSIENT_MIN * 60:
+                        wake = min(wake or back, back)  # a short rest: keep the task and come back to it
+                        continue
                     pending.remove(task_id)
-                    say(f"{task_id} waiting: every agent that could take it is resting; "
+                    until = f" until {clock(back)}" if back else ""
+                    say(f"{task_id} waiting: every agent that could take it is resting{until}; "
                         f"run dispatch again later, or use --loop")
                     continue
                 pending.remove(task_id)
@@ -88,7 +100,10 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
                 running[future] = (task_id, agent, token, before)
                 busy[agent] += 1
             if not running:
-                break  # nothing started and nothing left to wait for
+                if wake is None:
+                    break  # nothing started and nothing left to wait for
+                sleep(max(0.0, wake - now()) + 0.5)  # the only pending tasks wait on a short rest
+                continue
             finished, _ = wait(running, return_when=FIRST_COMPLETED)
             for future in finished:
                 task_id, agent, token, before = running.pop(future)
@@ -113,11 +128,17 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1)
                     else:
                         say(f"{task_id} result from {agent} was dropped: the claim was lost")
                     continue
-                if LIMIT_RE.search(text):
+                kind = classify(text)
+                if kind == "transient":
+                    flaky[agent] += 1
+                    if flaky[agent] >= TRANSIENT_HITS:
+                        kind = "limited"  # busy this often is as good as out of quota: rest it properly
+                if kind:
+                    minutes = TRANSIENT_MIN if kind == "transient" else COOLDOWN_MIN
                     reason = limit_reason(text)
-                    set_down(conn, agent, COOLDOWN_MIN, reason)
+                    set_down(conn, agent, minutes, reason)
                     release(conn, task_id, agent, text, kind="limited", token=token)
-                    say(f"{task_id} {agent} resting until {clock(now() + COOLDOWN_MIN * 60)} ({COOLDOWN_MIN} min): {reason}")
+                    say(f"{task_id} {agent} resting until {clock(now() + minutes * 60)} ({minutes} min): {reason}")
                 else:
                     release(conn, task_id, agent, text, kind="failed", token=token)
                     say(f"{task_id} {agent} failed, rerouting")

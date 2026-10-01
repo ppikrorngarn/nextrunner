@@ -236,6 +236,63 @@ class DispatchTest(Base):
         self.assertEqual(db.get(self.conn, t)["attempts"], 0)
         self.assertFalse(agents.is_up(self.conn, "alpha"))
 
+    def flaky_agent(self, failures, message="Selected model is at capacity. Please try a different model."):
+        """An agent that prints `message` and fails the first `failures` times, then answers."""
+        counter = Path(self.tmp.name) / "hits"
+        script = (f"import sys, pathlib; p = pathlib.Path({str(counter)!r}); n = int(p.read_text() or 0) if p.exists() else 0; "
+                  f"p.write_text(str(n + 1)); "
+                  f"sys.exit({message!r}) if n < {failures} else print('answer after', n, 'busy errors')")
+        return {"cmd": [PY, "-c", script]}
+
+    def test_busy_agent_is_retried_in_the_same_pass(self):
+        # The only agent that may take a strict task is at capacity once; the pass rests it briefly,
+        # waits for the rest to end, and runs it again. No attempt is counted and nobody rests for long.
+        t = board.add(self.conn, "strict review", to="alpha", strict=True)
+        naps = []
+
+        def nap(seconds):  # stands in for time.sleep: the rest is over when the pass looks again
+            naps.append(seconds)
+            agents.set_up(self.conn, "alpha")
+        dispatcher.dispatch(self.conn, agents={"alpha": self.flaky_agent(1)}, timeout=30, say=lambda l: None, sleep=nap)
+        self.assertEqual(self.status(t), "done")
+        self.assertEqual(db.get(self.conn, t)["result"], "answer after 1 busy errors")
+        self.assertEqual(db.get(self.conn, t)["attempts"], 0)
+        self.assertEqual(len(naps), 1)
+        self.assertLessEqual(naps[0], agents.TRANSIENT_MIN * 60 + 1)
+        self.assertEqual([k for a, k in self.kinds(t) if a == "alpha"], ["claimed", "run", "limited", "claimed", "run", "done"])
+
+    def test_busy_error_reroutes_a_task_for_anyone_and_rests_briefly(self):
+        t = board.add(self.conn, "anyone may take this")
+        before = db.now()
+        self.dispatch({"alpha": self.flaky_agent(5), "beta": OK})
+        self.assertEqual((self.status(t), db.get(self.conn, t)["claimed_by"]), ("done", "beta"))
+        row = self.conn.execute("SELECT down_until, reason FROM agents WHERE name = 'alpha'").fetchone()
+        self.assertLessEqual(row["down_until"] - before, agents.TRANSIENT_MIN * 60 + 5)
+        self.assertEqual(row["reason"], "Selected model is at capacity. Please try a different model.")
+
+    def test_three_busy_errors_in_a_pass_count_as_a_real_limit(self):
+        t = board.add(self.conn, "always busy", to="alpha", strict=True)
+        before = db.now()
+        said = []
+        dispatcher.dispatch(self.conn, agents={"alpha": self.flaky_agent(9)}, timeout=30, say=said.append,
+                            sleep=lambda s: agents.set_up(self.conn, "alpha"))
+        self.assertEqual(self.status(t), "ready")
+        self.assertEqual(db.get(self.conn, t)["attempts"], 0)
+        self.assertEqual(self.kinds(t).count(("alpha", "limited")), agents.TRANSIENT_HITS)
+        row = self.conn.execute("SELECT down_until FROM agents WHERE name = 'alpha'").fetchone()
+        self.assertGreater(row["down_until"] - before, agents.COOLDOWN_MIN * 60 - 5)
+        self.assertTrue(any("waiting" in line and "run dispatch again" in line for line in said), said)
+
+    def test_quota_error_leaves_the_task_for_the_next_pass(self):
+        t = board.add(self.conn, "out of credits", to="alpha", strict=True)
+        said, naps = [], []
+        dispatcher.dispatch(self.conn, agents={"alpha": LIMITED}, timeout=30, say=said.append, sleep=naps.append)
+        self.assertEqual(self.status(t), "ready")
+        self.assertEqual(naps, [])  # half an hour is not waited on inside a pass
+        self.assertTrue(any("resting until" in line and "usage limit" in line for line in said), said)
+        self.assertEqual(self.conn.execute("SELECT reason FROM agents WHERE name = 'alpha'").fetchone()["reason"],
+                         "You've hit your usage limit. Try again at 5pm.")
+
     def test_a_failure_with_no_limit_text_still_counts(self):
         script = "import sys; sys.stderr.write('noise\\n'); print('segfault in tool'); sys.exit(1)"
         t = board.add(self.conn, "plain failure")
@@ -292,15 +349,38 @@ class LimitTextTest(unittest.TestCase):
         "tests failed: 2 of 30, see test_session.py",
     ]
 
+    # Busy, not empty: the agent rests a couple of minutes and the pass comes back to it.
+    TRANSIENT = [
+        "Selected model is at capacity. Please try a different model.",
+        "API call failed after 3 retries: HTTP 429: Service capacity or quota was reached. "
+        "Slow down and retry shortly.",
+        "API Error: 529 Overloaded",
+        "The service is temporarily unavailable. Please try again later.",
+    ]
+
     def test_limit_and_login_messages_match(self):
         for text in self.RESTING:
             with self.subTest(text=text):
                 self.assertRegex(text, agents.LIMIT_RE)
+                self.assertIn(agents.classify(text), ("limited", "transient"))
 
     def test_ordinary_failures_do_not_match(self):
         for text in self.FAILING:
             with self.subTest(text=text):
                 self.assertNotRegex(text, agents.LIMIT_RE)
+                self.assertIsNone(agents.classify(text))
+
+    def test_busy_errors_are_transient(self):
+        for text in self.TRANSIENT:
+            with self.subTest(text=text):
+                self.assertEqual(agents.classify(text), "transient")
+
+    def test_quota_and_login_errors_are_not_transient(self):
+        hard = [t for t in self.RESTING if t not in self.TRANSIENT]
+        self.assertTrue(hard)
+        for text in hard:
+            with self.subTest(text=text):
+                self.assertEqual(agents.classify(text), "limited")
 
     def test_reason_is_the_matching_line(self):
         text = "Reading additional input from stdin...\n" + "diff --git a/x b/x\n" * 50 + \

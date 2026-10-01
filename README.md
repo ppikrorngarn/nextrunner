@@ -140,7 +140,8 @@ available agent in `agents.json` order. Then:
 | What happened | What the dispatcher does |
 |---|---|
 | The agent replied | Stores the reply word for word and marks the task done |
-| Limit, quota or login error | Rests that agent for 30 minutes and gives the task to the next agent. This does not count against the task |
+| Busy error (the model is at capacity, overloaded, HTTP 429) | Rests that agent for 2 minutes and gives the task to the next agent. A task with no one else to go to waits inside the pass and is retried when the rest ends, resuming the agent's session. Three busy errors from one agent in a pass count as a quota error. This does not count against the task |
+| Quota, credits or login error | Rests that agent for 30 minutes and gives the task to the next agent. A task with no one else to go to is left for the next pass; the dispatcher says until when. This does not count against the task |
 | Any other failure | Records the error and tries the next agent |
 | Every agent failed it | Marks the task blocked. `nextrunner reopen <id>` puts it back |
 | An edit task, and no agent has an edit command | Marks the task blocked |

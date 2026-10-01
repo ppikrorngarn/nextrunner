@@ -9,6 +9,8 @@ from .db import now
 
 MAX_ATTEMPTS = 3   # a strict task blocks after this many failures by its one agent
 COOLDOWN_MIN = 30  # how long an agent is skipped after a quota or login error
+TRANSIENT_MIN = 2  # how long it is skipped after a passing error, such as "model at capacity"
+TRANSIENT_HITS = 3 # passing errors in one dispatch pass before an agent is treated as out of quota
 
 
 # Failures that mean "this agent is unavailable", not "this task is bad".
@@ -22,6 +24,28 @@ LIMIT_RE = re.compile(
     r"overloaded|at capacity|temporarily unavailable|\b429\b",
     re.I,
 )
+
+# The subset of LIMIT_RE that passes on its own in minutes: the service is busy, not the
+# account empty or logged out. The agent rests TRANSIENT_MIN and the pass comes back to it.
+TRANSIENT_RE = re.compile(
+    r"at capacity|overloaded|retry shortly|try again (later|shortly|in a (few|moment))|"
+    r"temporarily unavailable|\b(429|502|503|529)\b",
+    re.I,
+)
+
+# Words that make a 429 or "try again" a real limit after all: nothing to do but wait for the reset.
+HARD_RE = re.compile(
+    r"exhausted|depleted|out of |expired|log ?in|sign in|api key|usage limit|weekly|session limit|"
+    r"budget|credit|resets? ",
+    re.I,
+)
+
+
+def classify(text):
+    """'limited' (quota or login: rest COOLDOWN_MIN), 'transient' (busy: rest TRANSIENT_MIN), or None."""
+    if not LIMIT_RE.search(text):
+        return None
+    return "transient" if TRANSIENT_RE.search(text) and not HARD_RE.search(text) else "limited"
 
 
 def limit_reason(text, width=200):
@@ -85,6 +109,17 @@ def candidates(conn, task, agents):
             "SELECT agent FROM events WHERE task_id = ? AND kind = 'failed'", (task["id"],))}
         names = [n for n in names if n not in failed]
     return names, None
+
+
+def rest_ends(conn, task, agents):
+    """When the first agent that could run this task is back, or None if none of them is resting."""
+    names, _ = candidates(conn, task, agents)
+    if not names:
+        return None
+    marks = ",".join("?" * len(names))
+    row = conn.execute(f"SELECT MIN(down_until) AS t FROM agents WHERE name IN ({marks}) AND down_until > ?",
+                       (*names, now())).fetchone()
+    return row["t"] if row and row["t"] else None
 
 
 def pick_agent(conn, task, agents, busy=()):
