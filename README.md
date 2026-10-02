@@ -162,7 +162,7 @@ files that were clean before and changed during the run:
   what was already there.
 - Anything you had staged stays staged and out of the commit.
 - A failed run commits nothing. A folder outside a git repository is skipped.
-- It never pushes.
+- It never pushes. Git hooks run as usual; if one refuses, the board says so.
 
 The outcome is a `commit` event on the task (`nextrunner show <id>`). Two
 `--commit` tasks in the same repository at the same time (`--jobs` above 1)
@@ -188,6 +188,29 @@ run's output. For an agent that reports cost and turns as JSON:
 
 gives `run  41s exit=0 cost=0.0312 turns=7 log=...`. `nextrunner doctor` checks
 the patterns. Figures are whatever the agent reports; nextrunner adds nothing up.
+
+### Hooks: hear when a task ends
+
+Add `"$hooks"` to `agents.json` and the dispatcher runs a command of yours
+after a task is `done`, `limited`, `failed` or `blocked`, once the board is
+written. `{id}`, `{title}`, `{agent}`, `{kind}` and `{text}` (the result,
+reason or error, cut to 500 characters) are filled in. A macOS notification
+for finished tasks and a spoken line when an agent rests:
+
+```json
+{
+  "$hooks": {
+    "done": ["osascript", "-e", "display notification \"{title}\" with title \"nextrunner: {agent} done\""],
+    "limited": ["say", "{agent} is resting"]
+  },
+  "NAME": { "cmd": ["..."] }
+}
+```
+
+Hooks are for telling a person. Output is ignored, a hook has 15 seconds,
+and one that fails is noted on the task as a `hook` event and never counts
+against the task. `nextrunner doctor` checks the programs and placeholders.
+Nothing runs unless you add the key.
 
 ## agents.json
 

@@ -145,6 +145,31 @@ def run_line(mono, returncode, usage, trace):
     return " ".join(parts)
 
 
+# ---- hooks ------------------------------------------------------------------
+# agents.json may name a command per outcome ("$hooks": {"done": [...], ...}).
+# The dispatcher runs it after the board is written. It is for telling a
+# person: a notification, a sound, a line in a log. Its output is ignored
+# and a failure is noted on the task, never counted against it.
+
+HOOK_TIMEOUT = 15
+
+
+def run_hook(command, task, agent, kind, text):
+    """Run one hook command with {id}, {title}, {agent}, {kind}, {text} filled in. Returns None, or why it failed."""
+    fields = {"id": task["id"], "title": task["title"], "agent": agent, "kind": kind, "text": (text or "")[:500]}
+    try:
+        cmd = [part.format(**fields) for part in command]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=HOOK_TIMEOUT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return f"{kind} hook: timed out after {HOOK_TIMEOUT}s"
+    except (OSError, KeyError, ValueError, IndexError) as err:
+        return f"{kind} hook: {err}"
+    if proc.returncode:
+        detail = (proc.stderr.strip() or proc.stdout.strip())[-300:]
+        return f"{kind} hook: exit code {proc.returncode}" + (f": {detail}" if detail else "")
+    return None
+
+
 # ---- commits ----------------------------------------------------------------
 # For a task added with --commit, the dispatcher commits what the agent changed,
 # so no agent needs write access to .git. It never pushes.

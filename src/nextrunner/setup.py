@@ -8,6 +8,7 @@ from importlib import resources
 from pathlib import Path
 
 from . import paths
+from .agents import HOOK_FIELDS, HOOKS, hooks_of
 
 KNOWN_FIELDS = {"prompt", "cwd", "out", "board", "session"}
 COMMAND_KEYS = ("cmd", "cmd_edit", "cmd_resume", "cmd_edit_resume")
@@ -59,6 +60,29 @@ def check_agents(agents):
 
     if not isinstance(agents, dict) or not agents:
         return [("error", "agents.json must be an object with at least one agent")]
+    try:
+        hooks = hooks_of(agents)
+    except ValueError as err:
+        return [("error", str(err))]
+    agents = {name: spec for name, spec in agents.items() if not name.startswith("$")}  # $hooks is not an agent
+    hook_problems = 0
+    for kind, command in hooks.items():
+        if not shutil.which(command[0]) and not (Path(command[0]).is_file() and Path(command[0]).stat().st_mode & 0o111):
+            add("error", f"{HOOKS}.{kind}: cannot find the program {command[0]!r} on PATH")
+            hook_problems += 1
+        for word in command:
+            try:
+                fields = {f for _, f, _, _ in string.Formatter().parse(word) if f is not None}
+            except ValueError as err:
+                add("error", f"{HOOKS}.{kind}: {word!r}: {err} (write a literal brace as {{{{ or }}}})")
+                hook_problems += 1
+                continue
+            for field in sorted(fields - HOOK_FIELDS):
+                add("error", f"{HOOKS}.{kind}: unknown placeholder {{{field}}}; hooks know "
+                             + ", ".join("{" + f + "}" for f in sorted(HOOK_FIELDS)))
+                hook_problems += 1
+    if hooks and not hook_problems:
+        add("ok", f"hooks: {', '.join(hooks)}")
     for name, spec in agents.items():
         if not isinstance(spec, dict) or not isinstance(spec.get("cmd"), list) or not spec["cmd"]:
             add("error", f"{name}: needs a \"cmd\" list")

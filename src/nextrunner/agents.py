@@ -56,6 +56,37 @@ def limit_reason(text, width=200):
     return text.strip()[:width]
 
 
+HOOKS = "$hooks"  # the agents.json key that holds commands the dispatcher runs when a task ends
+HOOK_KINDS = ("done", "limited", "failed", "blocked")
+HOOK_FIELDS = {"id", "title", "agent", "kind", "text"}  # placeholders a hook command may use
+
+
+def hooks_of(raw):
+    """The validated "$hooks" of agents.json as loaded: {kind: [command words]}. Raises ValueError."""
+    hooks = raw.get(HOOKS, {}) if isinstance(raw, dict) else {}
+    if not isinstance(hooks, dict):
+        raise ValueError(f"{HOOKS} must be an object with keys among {', '.join(HOOK_KINDS)}")
+    out = {}
+    for kind, command in hooks.items():
+        if kind not in HOOK_KINDS:
+            raise ValueError(f"{HOOKS}.{kind}: unknown; hooks are {', '.join(HOOK_KINDS)}")
+        if not isinstance(command, list) or not command or not all(isinstance(w, str) for w in command):
+            raise ValueError(f"{HOOKS}.{kind} must be a non-empty list of strings")
+        out[kind] = command
+    return out
+
+
+def load_hooks():
+    """The hooks in agents.json, or {} when there are none or no file."""
+    path = paths.agents_file()
+    if not path.exists():
+        return {}
+    try:
+        return hooks_of(json.loads(path.read_text()))
+    except ValueError as err:
+        sys.exit(f"{path}: {err} (nextrunner doctor explains)")
+
+
 def load_agents():
     """Read how to start each agent. Key order is the failover order.
 
@@ -68,7 +99,8 @@ def load_agents():
     path = paths.agents_file()
     if not path.exists():
         sys.exit(f"no {path}: run `nextrunner init` to write one, then describe your agents")
-    return json.loads(path.read_text())
+    raw = json.loads(path.read_text())
+    return {name: spec for name, spec in raw.items() if not name.startswith("$")}  # $hooks: settings, not agents
 
 
 def set_down(conn, name, minutes, reason=""):

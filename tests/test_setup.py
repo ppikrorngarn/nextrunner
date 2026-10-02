@@ -128,6 +128,24 @@ class DoctorTest(unittest.TestCase):
                 self.assertEqual(len(errors), 1, errors)
                 self.assertIn(expected, errors[0])
 
+    def test_hooks_are_checked(self):
+        good = {"$hooks": {"done": [PY, "-c", "pass", "{id}", "{title}", "{agent}", "{kind}", "{text}"]},
+                "a": {"cmd": [PY, "{prompt}"]}}
+        self.assertEqual(self.errors(good), [])
+        self.assertIn(("ok", "hooks: done"), self.levels(good))
+        cases = {
+            "unknown kind": ({"$hooks": {"started": [PY]}, "a": {"cmd": [PY, "{prompt}"]}}, "unknown; hooks are"),
+            "not a list": ({"$hooks": {"done": "say hi"}, "a": {"cmd": [PY, "{prompt}"]}}, "non-empty list"),
+            "bad placeholder": ({"$hooks": {"done": [PY, "{prompt}"]}, "a": {"cmd": [PY, "{prompt}"]}}, "unknown placeholder {prompt}"),
+            "missing program": ({"$hooks": {"done": ["no-such-prog-xyz", "{id}"]}, "a": {"cmd": [PY, "{prompt}"]}}, "cannot find the program"),
+            "not an object": ({"$hooks": ["say"], "a": {"cmd": [PY, "{prompt}"]}}, "must be an object"),
+        }
+        for name, (raw, expected) in cases.items():
+            with self.subTest(name):
+                errors = self.errors(raw)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(expected, errors[0])
+
     def test_doctor_reports_a_missing_file_and_bad_json(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"NEXTRUNNER_HOME": tmp}):
             lines, errors = setup.doctor()

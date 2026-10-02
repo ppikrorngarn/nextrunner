@@ -4,11 +4,11 @@ import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from .agents import COOLDOWN_MIN, TRANSIENT_HITS, TRANSIENT_MIN, classify, limit_reason, load_agents, pick_agent, \
-    rest_ends, set_down
+from .agents import COOLDOWN_MIN, TRANSIENT_HITS, TRANSIENT_MIN, classify, limit_reason, load_agents, load_hooks, \
+    pick_agent, rest_ends, set_down
 from .board import claim, done, last_session, release
 from .db import CLAIMABLE, board_dir, get, log, now, tx
-from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent
+from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent, run_hook
 
 def self_command():
     """The command that starts this program again: the bundled app itself, or python -m nextrunner."""
@@ -25,7 +25,7 @@ def clock(t):
     return time.strftime("%H:%M", time.localtime(t))
 
 
-def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1, sleep=time.sleep):
+def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1, sleep=time.sleep, hooks=None):
     """One pass over the board: run every free task, rerouting when an agent fails.
 
     Up to `jobs` runs go at once in total, and up to each agent's "parallel"
@@ -39,9 +39,23 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1,
     one else to go to waits inside the pass for that rest to end. A quota or
     login error rests the agent COOLDOWN_MIN minutes, and such a task is left
     for the next pass.
+
+    `hooks` ({kind: command}) run after a task is done, limited, failed or
+    blocked; by default they come from agents.json when `agents` does too.
     """
+    if hooks is None:
+        hooks = load_hooks() if agents is None else {}
     agents = agents or load_agents()
     board = board_dir(conn)
+
+    def fire(kind, task_id, agent, text):
+        if kind not in hooks:
+            return
+        problem = run_hook(hooks[kind], get(conn, task_id), agent, kind, text)
+        if problem:
+            with tx(conn):
+                log(conn, task_id, "dispatcher", "hook", problem)
+            say(f"{task_id} {problem}")
     free = conn.execute(f"SELECT id FROM tasks WHERE {CLAIMABLE} ORDER BY created_at, rowid", {"now": now()}).fetchall()
     pending = [row["id"] for row in free]  # oldest first; a failed task goes back to the front
     running = {}                           # future -> (task_id, agent, token, git snapshot)
@@ -77,6 +91,7 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1,
                                      f"WHERE id = :id AND {CLAIMABLE}", {"now": now(), "id": task_id})
                         log(conn, task_id, "dispatcher", "blocked", why.partition(": ")[2])
                     say(f"{task_id} {why}")
+                    fire("blocked", task_id, task["assignee"] or "", why.partition(": ")[2])
                     continue
                 if dry_run:
                     say(f"{task_id} would go to {agent}")
@@ -125,6 +140,7 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1,
                             with tx(conn):
                                 log(conn, task_id, "dispatcher", "commit", outcome)
                             say(f"{task_id} commit: {outcome}")
+                        fire("done", task_id, agent, text)
                     else:
                         say(f"{task_id} result from {agent} was dropped: the claim was lost")
                     continue
@@ -139,7 +155,9 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1,
                     set_down(conn, agent, minutes, reason)
                     release(conn, task_id, agent, text, kind="limited", token=token)
                     say(f"{task_id} {agent} resting until {clock(now() + minutes * 60)} ({minutes} min): {reason}")
+                    fire("limited", task_id, agent, reason)
                 else:
                     release(conn, task_id, agent, text, kind="failed", token=token)
                     say(f"{task_id} {agent} failed, rerouting")
+                    fire("failed", task_id, agent, text)
                 pending.insert(0, task_id)

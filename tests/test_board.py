@@ -612,6 +612,56 @@ class TraceTest(Base):
         self.assertRegex(out.getvalue(), r"alpha\s+run\s+\d+s exit=0 log=")
 
 
+class HooksTest(Base):
+    """$hooks in agents.json: a command per outcome, run after the board is written."""
+
+    def hook(self, kind):
+        """A hook that appends 'kind id agent text' to a file. Returns (command, path)."""
+        path = Path(self.tmp.name) / f"{kind}.log"
+        code = "import sys; open(sys.argv[1], 'a').write(' | '.join(sys.argv[2:]) + chr(10))"
+        return [PY, "-c", code, str(path), "{kind}", "{id}", "{agent}", "{title}", "{text}"], path
+
+    def go(self, agents, hooks):
+        dispatcher.dispatch(self.conn, agents=agents, timeout=30, say=lambda l: None, hooks=hooks)
+
+    def test_done_hook_gets_the_fields(self):
+        cmd, path = self.hook("done")
+        t = board.add(self.conn, "finish me", to="alpha")
+        self.go({"alpha": OK}, {"done": cmd})
+        self.assertEqual(path.read_text(), f"done | {t} | alpha | finish me | reply from a working agent\n")
+        self.assertNotIn(("dispatcher", "hook"), self.kinds(t))
+
+    def test_limited_failed_and_blocked_hooks(self):
+        limited, lpath = self.hook("limited")
+        failed, fpath = self.hook("failed")
+        blocked, bpath = self.hook("blocked")
+        hooks = {"limited": limited, "failed": failed, "blocked": blocked}
+        t = board.add(self.conn, "hard one")
+        self.go({"alpha": LIMITED, "beta": OK}, hooks)
+        self.assertEqual(lpath.read_text(), f"limited | {t} | alpha | hard one | You've hit your usage limit. Try again at 5pm.\n")
+        t2 = board.add(self.conn, "doomed", to="beta")
+        self.go({"beta": BROKEN}, hooks)  # the only agent fails it: nobody is left
+        self.assertEqual(fpath.read_text(), f"failed | {t2} | beta | doomed | segfault in tool\n")
+        self.assertEqual(bpath.read_text(), f"blocked | {t2} | beta | doomed | every agent that could take this has failed it\n")
+        self.assertEqual(self.status(t2), "blocked")
+
+    def test_a_failing_hook_is_noted_and_the_task_is_still_done(self):
+        t = board.add(self.conn, "x", to="alpha")
+        self.go({"alpha": OK}, {"done": [PY, "-c", "import sys; sys.exit('hook broke')"]})
+        self.assertEqual(self.status(t), "done")
+        note = [e["text"] for e in self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'hook'", (t,))]
+        self.assertEqual(note, ["done hook: exit code 1: hook broke"])
+        t2 = board.add(self.conn, "y", to="alpha")
+        self.go({"alpha": OK}, {"done": ["/no/such/program", "{id}"]})
+        self.assertEqual(self.status(t2), "done")
+        self.assertTrue(any("done hook" in e["text"] for e in self.conn.execute("SELECT text FROM events WHERE task_id = ?", (t2,))))
+
+    def test_no_hooks_by_default_when_agents_are_given(self):
+        t = board.add(self.conn, "x", to="alpha")
+        self.dispatch({"alpha": OK})
+        self.assertEqual(self.kinds(t), [("human", "created"), ("alpha", "claimed"), ("alpha", "run"), ("alpha", "done")])
+
+
 class TimeoutTest(Base):
     SLOW = {"cmd": [PY, "-c", "import time; time.sleep(3); print('slow but fine')"]}
 
