@@ -212,6 +212,46 @@ and one that fails is noted on the task as a `hook` event and never counts
 against the task. `nextrunner doctor` checks the programs and placeholders.
 Nothing runs unless you add the key.
 
+## Running the dispatcher all the time (macOS)
+
+`examples/nextrunner.dispatch.plist` is a LaunchAgent template that runs
+`nextrunner dispatch --loop 30` at login and restarts it if it exits. Nothing
+installs it for you.
+
+Install:
+
+```bash
+cp examples/nextrunner.dispatch.plist ~/Library/LaunchAgents/local.nextrunner.dispatch.plist
+# edit every /PATH/TO/... in the copy, including PATH for your agent programs
+plutil -lint ~/Library/LaunchAgents/local.nextrunner.dispatch.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.nextrunner.dispatch.plist
+launchctl print gui/$(id -u)/local.nextrunner.dispatch | grep -E 'state|pid'
+```
+
+Stop and remove:
+
+```bash
+launchctl bootout gui/$(id -u)/local.nextrunner.dispatch
+rm ~/Library/LaunchAgents/local.nextrunner.dispatch.plist
+```
+
+`bootout` stops it until you bootstrap it again. Because of `KeepAlive`,
+killing the process alone only makes launchd start a new one.
+
+Log: the template sends the dispatcher's output and errors to `dispatch.log`
+(`tail -f` it; `nextrunner where` shows the folder). The file grows forever;
+empty it with `: > dispatch.log` now and then.
+
+Sleep: nothing runs while the Mac sleeps. The dispatcher and any agent it
+started are frozen and carry on after wake. A claim's time limit keeps
+counting during sleep, so a task that was running may show as expired and
+free after a long sleep. The board then treats it like any other expired
+claim, and the old run cannot finish it if a newer claim exists. The run
+`--timeout` uses a clock that stops during sleep on macOS, so sleep does not
+count against it. To keep tasks moving, keep the Mac awake (for
+example `caffeinate -s` on power) or accept that work waits until wake.
+The template runs only while you are logged in.
+
 ## agents.json
 
 Key order is the failover order.

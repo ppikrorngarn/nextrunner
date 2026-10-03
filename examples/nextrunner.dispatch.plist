@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Example LaunchAgent that keeps `nextrunner dispatch --loop` running.
+  Replace every /PATH/TO/... before use. See "Running the dispatcher all the
+  time" in README.md. Nothing here is installed by the project.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>local.nextrunner.dispatch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/PATH/TO/bin/nextrunner</string>
+    <string>dispatch</string>
+    <string>--loop</string>
+    <string>30</string>
+  </array>
+
+  <!-- launchd starts with a minimal PATH; list where your agent programs live. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/PATH/TO/agent/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <!-- Start at login and restart if the process exits. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Wait at least this many seconds between restarts after a crash. -->
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/PATH/TO/logs/nextrunner-dispatch.log</string>
+  <key>StandardErrorPath</key>
+  <string>/PATH/TO/logs/nextrunner-dispatch.log</string>
+</dict>
+</plist>
