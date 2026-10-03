@@ -8,7 +8,7 @@ import time
 
 from . import __version__
 from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
-from .board import ME, add, beat, claim, claim_next, done, note, release, reopen
+from .board import ME, add, approve, beat, claim, claim_next, done, note, release, reopen
 from .db import connect, get
 from .dispatcher import dispatch
 from .setup import doctor, init
@@ -62,6 +62,8 @@ def main(argv=None):
                     help="implies --edit: when the agent finishes, the dispatcher commits the files it changed (never pushes)")
     sp.add_argument("--follow", metavar="ID",
                     help="continue task ID's conversation: same agent and folder, resuming its session if it has one")
+    sp.add_argument("--hold", action="store_true",
+                    help="nobody may take the task until a person runs `nextrunner ok <id>`; for work that acts outside the machine")
     sp.add_argument("--by", default=ME)
     sp = cmd("list", "list tasks")
     sp.add_argument("--all", action="store_true", help="include done tasks")
@@ -84,6 +86,8 @@ def main(argv=None):
     sp.add_argument("--reason", default="")
     sp.add_argument("--token", help=token_help)
     cmd("reopen", "put a blocked or done task back to ready", task=True)
+    sp = cmd("ok", "approve a task added with --hold, so an agent may take it", task=True)
+    sp.add_argument("--by", default=ME)
     sp = cmd("agents", "show which agents the dispatcher can start")
     sp.add_argument("--expanded", action="store_true", help="also print every command, with $lists filled in")
     sp = cmd("down", "mark an agent unavailable")
@@ -136,7 +140,7 @@ def main(argv=None):
 
     if a.cmd == "add":
         need(a.follow is None or get(conn, a.follow), f"no task {a.follow}")
-        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit, a.commit, a.follow))
+        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit, a.commit, a.follow, a.hold))
     elif a.cmd == "list":
         clauses, params = [], {}
         if not a.all:
@@ -172,6 +176,10 @@ def main(argv=None):
         need(release(conn, a.id, a.agent, a.reason, token=a.token), f"{a.agent} does not hold {a.id}")
     elif a.cmd == "reopen":
         need(reopen(conn, a.id), f"{a.id} is not blocked or done")
+    elif a.cmd == "ok":
+        need(get(conn, a.id), f"no task {a.id}")
+        need(approve(conn, a.id, a.by), f"{a.id} is not held")
+        print(f"approved {a.id}; the next dispatch may run it")
     elif a.cmd == "agents":
         for name, spec in load_agents().items():
             row = conn.execute("SELECT * FROM agents WHERE name = ?", (name,)).fetchone()

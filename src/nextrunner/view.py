@@ -10,6 +10,8 @@ def stamp(t):
 
 
 def shown_status(task):
+    if task["status"] == "ready" and task["held"]:
+        return "held"
     expired = task["status"] == "running" and task["claim_expires"] < now()
     return "expired" if expired else task["status"]
 
@@ -24,6 +26,8 @@ def print_task(conn, task):
     if task["follows"]:
         print(f"  follows:  {task['follows']}")
     print(f"  attempts: {task['attempts']}")
+    if task["status"] == "ready" and task["held"]:
+        print(f"  held:     waiting for approval; `nextrunner ok {task['id']}` lets it run")
     if task["body"]:
         print(f"\n{task['body']}")
     if task["result"] is not None:
@@ -51,7 +55,7 @@ def row_cells(task, state, t):
     return who, level, f"{ago(t - task['last_at'])} ago", left
 
 
-STATE_ORDER = ["STALE", "running", "expired", "ready", "blocked", "done"]
+STATE_ORDER = ["STALE", "running", "expired", "ready", "held", "blocked", "done"]
 FINISHED = "('done')"  # statuses that leave the open list
 
 
@@ -91,7 +95,7 @@ def recent_events(conn, limit=5, width=100):
 
 def render_status(conn, stale_min=15, width=100, color=False):
     """The board as text: open tasks, tasks done in the last hour, resting agents, latest events."""
-    paint = {"running": "36", "ready": "0", "blocked": "31", "expired": "33", "STALE": "33;1", "done": "32"}
+    paint = {"running": "36", "ready": "0", "held": "35", "blocked": "31", "expired": "33", "STALE": "33;1", "done": "32"}
 
     def colored(text, key):
         return f"\033[{paint.get(key, '0')}m{text}\033[0m" if color else text
@@ -109,6 +113,8 @@ def render_status(conn, stale_min=15, width=100, color=False):
         lines += ["", "latest:"] + events
     if any(state == "STALE" for _, state, _ in rows):
         lines += ["", f"STALE = running, but no event for over {stale_min} min. Check it with: nextrunner show <id>"]
+    if any(state == "held" for _, state, _ in rows):
+        lines += ["", "held = waiting for approval. Let it run with: nextrunner ok <id>"]
     return "\n".join(lines)
 
 

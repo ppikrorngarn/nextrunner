@@ -674,6 +674,74 @@ class HooksTest(Base):
         self.assertTrue(path.read_text().startswith(f"done | {t} | alpha | from file"))
 
 
+class HoldTest(Base):
+    """A task added with --hold runs only after a person approves it."""
+
+    def test_nobody_may_take_a_held_task(self):
+        t = board.add(self.conn, "post the message", to="alpha", hold=True)
+        self.assertEqual(view.shown_status(db.get(self.conn, t)), "held")
+        self.assertIsNone(board.claim(self.conn, t, "alpha"))
+        self.assertIsNone(board.claim(self.conn, t, "beta", steal=True))
+        self.assertIsNone(board.claim_next(self.conn, "alpha"))
+        self.dispatch({"alpha": OK})
+        self.assertEqual(self.kinds(t), [("human", "created")])
+        created = self.conn.execute("SELECT text FROM events WHERE task_id = ?", (t,)).fetchone()["text"]
+        self.assertIn("held for approval", created)
+
+    def test_ok_lets_it_run_and_records_who_approved_what(self):
+        t = board.add(self.conn, "post the message", "the exact text", to="alpha", hold=True)
+        self.assertTrue(board.approve(self.conn, t, by="wasin"))
+        self.assertEqual(view.shown_status(db.get(self.conn, t)), "ready")
+        approved = self.conn.execute("SELECT agent, text FROM events WHERE task_id = ? AND kind = 'approved'", (t,)).fetchone()
+        self.assertEqual(approved["agent"], "wasin")
+        self.assertEqual(approved["text"], f"brief {board.brief_hash(db.get(self.conn, t))}")
+        self.dispatch({"alpha": OK})
+        self.assertEqual(self.status(t), "done")
+
+    def test_ok_is_refused_when_nothing_is_held(self):
+        t = board.add(self.conn, "plain task")
+        self.assertFalse(board.approve(self.conn, t))
+        self.assertNotIn(("human", "approved"), self.kinds(t))
+
+    def test_a_held_task_waits_while_others_run(self):
+        held = board.add(self.conn, "held one", hold=True)
+        free = board.add(self.conn, "free one")
+        self.dispatch({"alpha": OK})
+        self.assertEqual((self.status(held), self.status(free)), ("ready", "done"))
+
+    def test_cli_add_hold_and_ok(self):
+        env = mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path})
+        with env, contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["add", "say it", "--hold"])
+        t = out.getvalue().strip()
+        self.assertEqual(view.shown_status(db.get(self.conn, t)), "held")
+        with env, contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["list"])
+        self.assertIn("held", out.getvalue())
+        with env, contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["ok", t, "--by", "wasin"])
+        self.assertIn(f"approved {t}", out.getvalue())
+        with env, self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            cli.main(["ok", t])  # not held any more
+
+    def test_status_explains_held(self):
+        board.add(self.conn, "held one", hold=True)
+        screen = view.render_status(self.conn, width=200)
+        self.assertIn("1 held", screen)
+        self.assertIn("nextrunner ok <id>", screen)
+
+    def test_old_board_gains_the_held_column(self):
+        path = Path(self.tmp.name) / "old.db"
+        old = sqlite3.connect(path)
+        old.executescript(db.SCHEMA.replace("    held          INTEGER NOT NULL DEFAULT 0,\n", ""))
+        old.close()
+        conn = db.connect(str(path))
+        self.addCleanup(conn.close)
+        self.assertIn("held", {c["name"] for c in conn.execute("PRAGMA table_info(tasks)")})
+        t = board.add(conn, "on an old board")
+        self.assertEqual(view.shown_status(db.get(conn, t)), "ready")
+
+
 class TimeoutTest(Base):
     SLOW = {"cmd": [PY, "-c", "import time; time.sleep(3); print('slow but fine')"]}
 

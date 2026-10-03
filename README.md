@@ -110,6 +110,15 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
   next step), so a stopped run leaves more than an empty result.
 - **`--to NAME`** means the task is for that agent first. Other agents take
   it only if that agent fails. Add `--strict` to never reroute.
+- **Held for approval.** `nextrunner add --hold` makes a task that nobody may
+  take, not the dispatcher, not `next`, not `claim`, until a person runs
+  `nextrunner ok <id>`. Use it when an agent
+  drafts work that acts outside the machine, such as a message to post: the
+  draft goes on the board held, you read it, and your `ok` is an `approved`
+  event on the task with a fingerprint of the brief it covered. A held task
+  shows as `held`. This guards against a draft being run before anyone
+  looked at it; it is not a lock against an agent with a shell, which can
+  run `nextrunner ok` too.
 - **Lanes.** A task for a name that has no entry in `agents.json` is left
   alone by the dispatcher. Someone pulls it with `next --as NAME`.
 - **Read or edit.** A task is read-only unless you add it with `--edit`.
@@ -365,6 +374,9 @@ PyInstaller cannot cross-compile, so one build per OS and CPU.
 - The dispatcher starts agents with whatever permissions your commands give
   them. Keep `cmd` read-only and add `cmd_edit` only for agents you trust
   with changes.
+- `--hold` guards against a task running before a person looked at it. Any
+  agent with a shell can run `nextrunner ok`, so it is a record of who approved
+  what, not a lock.
 - Read and edit levels guard against accidents. They are not a security
   boundary: every agent runs as you, and any agent with a shell can add an
   `--edit` task.

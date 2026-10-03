@@ -1,4 +1,5 @@
 """Tasks and events: add, claim, note, beat, done, release, reopen."""
+import hashlib
 import os
 import secrets
 import sqlite3
@@ -24,7 +25,8 @@ def new_task_id(t=None):
     return "t_" + stamp + "".join(secrets.choice(ID_ALPHABET) for _ in range(4))
 
 
-def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False, commit=False, follows=None):
+def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False, commit=False, follows=None,
+        hold=False):
     edit = edit or commit  # committing the changes only makes sense if the agent may make them
     if follows:
         earlier = get(conn, follows)
@@ -40,12 +42,12 @@ def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False
         try:
             with tx(conn):
                 conn.execute(
-                    "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, follows, "
-                    "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), follows, by, t, t),
+                    "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, follows, held, "
+                    "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), follows, int(hold), by, t, t),
                 )
                 log(conn, task_id, by, "created", f"to={to or 'anyone'}{' (strict)' if strict else ''}, {level}"
-                    f"{f', follows {follows}' if follows else ''}")
+                    f"{f', follows {follows}' if follows else ''}{', held for approval' if hold else ''}")
             return task_id
         except sqlite3.IntegrityError:
             if attempt == 4:
@@ -114,6 +116,22 @@ def release(conn, task_id, agent, reason="", kind="released", token=None):
     """Hand a task back. kind='failed' also counts as an attempt."""
     sets = "status = 'ready', claimed_by = NULL, claim_expires = NULL, attempts = attempts + ?"
     return _owned(conn, task_id, agent, sets, (int(kind == "failed"),), kind, reason, token)
+
+
+def brief_hash(task):
+    """A short fingerprint of a task's title and brief, so an approval says what text it covered."""
+    return hashlib.sha256(f"{task['title']}\n{task['body']}".encode()).hexdigest()[:12]
+
+
+def approve(conn, task_id, by=ME):
+    """Let a held task run. Returns False if the task is not held."""
+    with tx(conn):
+        task = get(conn, task_id)
+        ok = conn.execute("UPDATE tasks SET held = 0, updated_at = ? WHERE id = ? AND held = 1",
+                          (now(), task_id)).rowcount == 1
+        if ok:
+            log(conn, task_id, by, "approved", f"brief {brief_hash(task)}")
+    return ok
 
 
 def reopen(conn, task_id, by=ME):
