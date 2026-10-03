@@ -1,4 +1,7 @@
 {
+  "$lists": {
+    "b-read": ["--output-format", "json", "--allow", "read"]
+  },
   "agent-a": {
     "cmd": [
       "agent-a-cli",
@@ -31,10 +34,7 @@
       "agent-b-cli",
       "--print",
       "{prompt}",
-      "--output-format",
-      "json",
-      "--allow",
-      "read"
+      "@b-read"
     ],
     "reply": "json:result",
     "session": "\"session_id\":\\s*\"([^\"]+)\"",
@@ -42,10 +42,7 @@
       "agent-b-cli",
       "--print",
       "{prompt}",
-      "--output-format",
-      "json",
-      "--allow",
-      "read",
+      "@b-read",
       "--resume",
       "{session}"
     ]

@@ -56,23 +56,68 @@ def limit_reason(text, width=200):
     return text.strip()[:width]
 
 
+LISTS = "$lists"  # the agents.json key that holds named word lists, spliced in where a command says "@name"
 HOOKS = "$hooks"  # the agents.json key that holds commands the dispatcher runs when a task ends
 HOOK_KINDS = ("done", "limited", "failed", "blocked")
 HOOK_FIELDS = {"id", "title", "agent", "kind", "text"}  # placeholders a hook command may use
 
 
-def hooks_of(raw):
+def expand(raw):
+    """agents.json as loaded -> {name: spec} with every "@name" command word replaced by that list's words.
+
+    {"$lists": {"name": ["word", ...]}, "NAME": {...}}. A list may not refer to
+    another list. Raises ValueError for a list that does not exist or is not a
+    list of strings, so the caller can say which.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("agents.json must be an object")
+    lists = raw.get(LISTS, {})
+    if not isinstance(lists, dict):
+        raise ValueError(f"{LISTS} must be an object of named lists")
+    for name, words in lists.items():
+        if not isinstance(words, list) or not all(isinstance(w, str) for w in words):
+            raise ValueError(f"{LISTS}.{name} must be a list of strings")
+        for word in words:
+            if word.startswith("@") and word[1:] in lists:
+                raise ValueError(f"{LISTS}.{name}: a list may not use another list ({word})")
+    agents = {}
+    for name, spec in raw.items():
+        if name.startswith("$"):
+            continue  # $lists, $hooks: settings, not agents
+        if isinstance(spec, dict):
+            spec = dict(spec)
+            for key, command in spec.items():
+                if key.startswith("cmd") and isinstance(command, list):
+                    spec[key] = splice(command, lists, f"{name}.{key}")
+        agents[name] = spec
+    return agents
+
+
+def splice(command, lists, where=""):
+    words = []
+    for word in command:
+        if isinstance(word, str) and word.startswith("@") and len(word) > 1:
+            if word[1:] not in lists:
+                raise ValueError(f"{where}: no list named {word[1:]!r} in {LISTS}")
+            words.extend(lists[word[1:]])
+        else:
+            words.append(word)
+    return words
+
+
+def hooks_of(raw, lists=None):
     """The validated "$hooks" of agents.json as loaded: {kind: [command words]}. Raises ValueError."""
     hooks = raw.get(HOOKS, {}) if isinstance(raw, dict) else {}
     if not isinstance(hooks, dict):
         raise ValueError(f"{HOOKS} must be an object with keys among {', '.join(HOOK_KINDS)}")
+    lists = raw.get(LISTS, {}) if lists is None and isinstance(raw, dict) else (lists or {})
     out = {}
     for kind, command in hooks.items():
         if kind not in HOOK_KINDS:
             raise ValueError(f"{HOOKS}.{kind}: unknown; hooks are {', '.join(HOOK_KINDS)}")
         if not isinstance(command, list) or not command or not all(isinstance(w, str) for w in command):
             raise ValueError(f"{HOOKS}.{kind} must be a non-empty list of strings")
-        out[kind] = command
+        out[kind] = splice(command, lists if isinstance(lists, dict) else {}, f"{HOOKS}.{kind}")
     return out
 
 
@@ -95,12 +140,16 @@ def load_agents():
     out and the agent never gets one. {prompt}, {cwd}, {out} and {board} (the
     folder holding the board file) are filled in. "file" reads the reply from
     {out}; "json:<key>" parses stdout and fails the run if is_error is set.
+    A "$lists" entry holds named word lists; "@name" in a command stands for
+    that list's words, so a long set of flags is written once.
     """
     path = paths.agents_file()
     if not path.exists():
         sys.exit(f"no {path}: run `nextrunner init` to write one, then describe your agents")
-    raw = json.loads(path.read_text())
-    return {name: spec for name, spec in raw.items() if not name.startswith("$")}  # $hooks: settings, not agents
+    try:
+        return expand(json.loads(path.read_text()))
+    except ValueError as err:
+        sys.exit(f"{path}: {err} (nextrunner doctor explains)")
 
 
 def set_down(conn, name, minutes, reason=""):

@@ -1,6 +1,7 @@
 """The nextrunner command line."""
 import argparse
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -83,7 +84,8 @@ def main(argv=None):
     sp.add_argument("--reason", default="")
     sp.add_argument("--token", help=token_help)
     cmd("reopen", "put a blocked or done task back to ready", task=True)
-    cmd("agents", "show which agents the dispatcher can start")
+    sp = cmd("agents", "show which agents the dispatcher can start")
+    sp.add_argument("--expanded", action="store_true", help="also print every command, with $lists filled in")
     sp = cmd("down", "mark an agent unavailable")
     sp.add_argument("name")
     sp.add_argument("--minutes", type=float, default=COOLDOWN_MIN)
@@ -176,6 +178,10 @@ def main(argv=None):
             state = "up" if is_up(conn, name) else f"down until {stamp(row['down_until'])}  {row['reason']}"
             print(f"{name:<10} {'read+edit' if spec.get('cmd_edit') else 'read only':<10} "
                   f"parallel {spec.get('parallel', 1):<3} {state}")
+            if a.expanded:
+                for key in ("cmd", "cmd_edit", "cmd_resume", "cmd_edit_resume"):
+                    if spec.get(key):
+                        print(f"  {key}: {shlex.join(spec[key])}")
     elif a.cmd == "down":
         set_down(conn, a.name, a.minutes, a.reason)
     elif a.cmd == "up":

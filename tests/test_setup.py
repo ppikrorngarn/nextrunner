@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nextrunner import cli, setup
+from nextrunner import agents, cli, setup
 
 PY = sys.executable
 
@@ -118,6 +118,42 @@ class DoctorTest(unittest.TestCase):
                 self.assertEqual(len(errors), 1)
                 self.assertIn("timeout must be a number of seconds above 0", errors[0])
 
+    def test_lists_are_spliced_into_commands(self):
+        raw = {"$lists": {"tools": ["--allow", "Read", "Grep"]},
+               "a": {"cmd": [PY, "@tools", "{prompt}"], "cmd_edit": [PY, "@tools", "--edit", "{prompt}"], "parallel": 2}}
+        expanded = agents.expand(raw)
+        self.assertEqual(list(expanded), ["a"])
+        self.assertEqual(expanded["a"]["cmd"], [PY, "--allow", "Read", "Grep", "{prompt}"])
+        self.assertEqual(expanded["a"]["cmd_edit"], [PY, "--allow", "Read", "Grep", "--edit", "{prompt}"])
+        self.assertEqual(expanded["a"]["parallel"], 2)
+        self.assertEqual(raw["a"]["cmd"][1], "@tools")  # the input is left alone
+        self.assertEqual(self.errors(raw), [])
+
+    def test_a_word_that_is_only_an_at_sign_is_a_word(self):
+        self.assertEqual(agents.expand({"a": {"cmd": [PY, "@", "{prompt}"]}})["a"]["cmd"], [PY, "@", "{prompt}"])
+
+    def test_doctor_names_a_missing_or_bad_list(self):
+        errors = self.errors({"a": {"cmd": [PY, "@tools", "{prompt}"]}})
+        self.assertEqual(errors, ["a.cmd: no list named 'tools' in $lists"])
+        errors = self.errors({"$lists": {"tools": "not a list"}, "a": {"cmd": [PY, "{prompt}"]}})
+        self.assertEqual(errors, ["$lists.tools must be a list of strings"])
+        errors = self.errors({"$lists": {"x": ["@y"], "y": ["z"]}, "a": {"cmd": [PY, "{prompt}"]}})
+        self.assertEqual(errors, ["$lists.x: a list may not use another list (@y)"])
+        errors = self.errors({"$lists": {"x": ["z"]}})
+        self.assertEqual(errors, ["agents.json must be an object with at least one agent"])
+
+    def test_load_agents_expands_and_refuses_a_bad_file(self):
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        path = Path(home.name) / "agents.json"
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_HOME": home.name}):
+            path.write_text(json.dumps({"$lists": {"t": ["--x"]}, "a": {"cmd": ["prog", "@t", "{prompt}"]}}))
+            self.assertEqual(agents.load_agents(), {"a": {"cmd": ["prog", "--x", "{prompt}"]}})
+            path.write_text(json.dumps({"a": {"cmd": ["prog", "@nope", "{prompt}"]}}))
+            with self.assertRaises(SystemExit) as stop:
+                agents.load_agents()
+            self.assertIn("no list named 'nope'", str(stop.exception))
+
     def test_usage_patterns_are_checked(self):
         base = {"cmd": [PY, "{prompt}"]}
         self.assertEqual(self.errors({"a": dict(base, usage={"cost": r"cost=([0-9.]+)"})}), [])
@@ -133,6 +169,7 @@ class DoctorTest(unittest.TestCase):
                 "a": {"cmd": [PY, "{prompt}"]}}
         self.assertEqual(self.errors(good), [])
         self.assertIn(("ok", "hooks: done"), self.levels(good))
+        self.assertEqual(agents.expand(good).keys(), {"a"})  # $hooks is not an agent
         cases = {
             "unknown kind": ({"$hooks": {"started": [PY]}, "a": {"cmd": [PY, "{prompt}"]}}, "unknown; hooks are"),
             "not a list": ({"$hooks": {"done": "say hi"}, "a": {"cmd": [PY, "{prompt}"]}}, "non-empty list"),

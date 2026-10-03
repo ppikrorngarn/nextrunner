@@ -1,6 +1,7 @@
 """Tests for nextrunner. Run: python3 -m unittest -v   (from the repo root, with src on the path: PYTHONPATH=src, or uv run)"""
 import contextlib
 import io
+import json
 import multiprocessing
 import os
 import sqlite3
@@ -660,6 +661,17 @@ class HooksTest(Base):
         t = board.add(self.conn, "x", to="alpha")
         self.dispatch({"alpha": OK})
         self.assertEqual(self.kinds(t), [("human", "created"), ("alpha", "claimed"), ("alpha", "run"), ("alpha", "done")])
+
+    def test_hooks_come_from_agents_json_with_lists(self):
+        cmd, path = self.hook("done")
+        home = Path(self.tmp.name) / "home"; home.mkdir()
+        (home / "agents.json").write_text(json.dumps({
+            "$lists": {"fields": cmd[4:]}, "$hooks": {"done": cmd[:4] + ["@fields"]}, "alpha": OK}))
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_HOME": str(home)}):
+            self.assertEqual(agents.load_hooks(), {"done": cmd})
+            t = board.add(self.conn, "from file", to="alpha")
+            dispatcher.dispatch(self.conn, timeout=30, say=lambda l: None)
+        self.assertTrue(path.read_text().startswith(f"done | {t} | alpha | from file"))
 
 
 class TimeoutTest(Base):

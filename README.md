@@ -235,6 +235,25 @@ The board only chooses which command to run. The limits themselves come
 from the flags you put in each command, so check what your programs can
 enforce.
 
+A long set of flags that several commands share, such as the tools an agent
+may use, is written once as a named list and used by name:
+
+```json
+{
+  "$lists": {
+    "safe-tools": ["--allowedTools", "Read", "Grep", "Glob"]
+  },
+  "NAME": {
+    "cmd": ["program", "@safe-tools", "{prompt}"],
+    "cmd_edit": ["program", "@safe-tools", "--allow-edits", "{prompt}"]
+  }
+}
+```
+
+`@safe-tools` stands for the list's words, in place. A list may not use
+another list. `nextrunner doctor` names a `@word` that has no list, and
+`nextrunner agents --expanded` prints every command with the lists filled in.
+
 Placeholders: `{prompt}` is the task text, `{cwd}` the task's folder,
 `{out}` a temporary file path, `{board}` the folder holding the board file
 (an agent needs write access there to leave notes).
