@@ -674,6 +674,29 @@ class HooksTest(Base):
         self.assertTrue(path.read_text().startswith(f"done | {t} | alpha | from file"))
 
 
+class BodyFileTest(Base):
+    def add(self, *args, stdin=None):
+        env = mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path})
+        with env, contextlib.redirect_stdout(io.StringIO()) as out, \
+                mock.patch("sys.stdin", io.StringIO(stdin or "")):
+            cli.main(["add", "titled", *args])
+        return db.get(self.conn, out.getvalue().strip())
+
+    def test_brief_from_a_file_and_from_stdin(self):
+        path = Path(self.tmp.name) / "brief.md"
+        path.write_text("Goal: read it.\n\nDone = a list.\n")
+        self.assertEqual(self.add("--body-file", str(path))["body"], "Goal: read it.\n\nDone = a list.")
+        self.assertEqual(self.add("--body-file", "-", stdin="from stdin\n")["body"], "from stdin")
+
+    def test_body_file_refusals(self):
+        empty = Path(self.tmp.name) / "empty.md"
+        empty.write_text("  \n")
+        for args in (["--body-file", "/no/such/file"], ["--body-file", str(empty)],
+                     ["--body", "x", "--body-file", str(empty)]):
+            with self.subTest(args=args), self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                self.add(*args)
+
+
 class ListByDateTest(Base):
     """nextrunner list --since / --until pick tasks by when they last changed."""
 

@@ -6,6 +6,7 @@ import shlex
 import shutil
 import sys
 import time
+from pathlib import Path
 
 from . import __version__
 from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
@@ -54,7 +55,9 @@ def main(argv=None):
 
     sp = cmd("add", "create a task")
     sp.add_argument("title")
-    sp.add_argument("--body", default="", help="the brief: goal, folder, what is known, what done looks like")
+    body = sp.add_mutually_exclusive_group()
+    body.add_argument("--body", default="", help="the brief: goal, folder, what is known, what done looks like")
+    body.add_argument("--body-file", metavar="PATH", help="read the brief from a file, or from stdin with -")
     sp.add_argument("--to", metavar="AGENT", help="agent this task is for; others take it only if that agent fails")
     sp.add_argument("--strict", action="store_true", help="with --to: never reroute, wait for that agent")
     sp.add_argument("--cwd", help="folder the agent starts in")
@@ -124,6 +127,14 @@ def main(argv=None):
     if a.cmd == "add":
         if a.strict and not (a.to or a.follow):
             p.error("--strict needs --to or --follow")
+    if a.cmd == "add" and a.body_file:
+        try:
+            a.body = sys.stdin.read() if a.body_file == "-" else Path(a.body_file).read_text(encoding="utf-8")
+        except OSError as err:
+            p.error(f"--body-file: {err}")
+        a.body = a.body.strip()
+        if not a.body:
+            p.error("--body-file: the file is empty")
     if a.cmd == "list":
         try:
             a.since = parse_when(a.since) if a.since else None
