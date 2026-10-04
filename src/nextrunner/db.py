@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     commit_changes INTEGER NOT NULL DEFAULT 0,
     follows       TEXT,
     held          INTEGER NOT NULL DEFAULT 0,
+    fanout        TEXT,
     status        TEXT NOT NULL DEFAULT 'ready'
                   CHECK (status IN ('ready', 'running', 'done', 'blocked')),
     claimed_by    TEXT,
@@ -77,6 +78,8 @@ def connect(path=None):
             conn.execute("ALTER TABLE tasks ADD COLUMN follows TEXT")  # board made before --follow
         if "held" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN held INTEGER NOT NULL DEFAULT 0")  # board made before --hold
+        if "fanout" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN fanout TEXT")  # board made before fan-out
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 

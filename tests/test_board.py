@@ -674,6 +674,59 @@ class HooksTest(Base):
         self.assertTrue(path.read_text().startswith(f"done | {t} | alpha | from file"))
 
 
+class FanOutTest(Base):
+    """--to twice or more: one strict task per agent, and compare shows the answers together."""
+
+    def cli(self, *args, stdin=None):
+        env = mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path})
+        with env, contextlib.redirect_stdout(io.StringIO()) as out, mock.patch("sys.stdin", io.StringIO(stdin or "")):
+            cli.main(list(args))
+        return out.getvalue()
+
+    def refused(self, *args):
+        """What a refused command says: argparse writes to stderr, `need` puts it in the SystemExit."""
+        with self.assertRaises(SystemExit) as stop, contextlib.redirect_stderr(io.StringIO()) as err, \
+                mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}):
+            cli.main(list(args))
+        return err.getvalue() + str(stop.exception)
+
+    def test_one_strict_task_per_agent_with_the_same_brief(self):
+        ids = self.cli("add", "second opinion", "--body", "the brief", "--to", "alpha", "--to", "beta", "--to", "alpha").split()
+        self.assertEqual(len(ids), 2)  # a repeated name counts once
+        tasks = [db.get(self.conn, t) for t in ids]
+        self.assertEqual([(t["assignee"], t["strict"], t["body"], t["fanout"]) for t in tasks],
+                         [("alpha", 1, "the brief", ids[0]), ("beta", 1, "the brief", ids[0])])
+        self.assertIn(("human", "fan-out"), self.kinds(ids[0]))
+        self.dispatch({"alpha": ECHO, "beta": OK})
+        self.assertEqual([self.status(t) for t in ids], ["done", "done"])
+        text = self.cli("compare", ids[1])
+        self.assertIn("second opinion  (2 tasks)", text)
+        self.assertLess(text.index(ids[0]), text.index(ids[1]))
+        self.assertIn("reply from a working agent", text)
+        rows = json.loads(self.cli("compare", ids[0], "--json"))
+        self.assertEqual([r["id"] for r in rows], ids)
+
+    def test_compare_on_a_lone_task_shows_just_it(self):
+        t = self.cli("add", "alone", "--to", "alpha").strip()
+        self.assertIsNone(db.get(self.conn, t)["fanout"])
+        self.assertIn("(1 task)", self.cli("compare", t))
+        self.assertIn("no task", self.refused("compare", "t_nope"))
+
+    def test_fan_out_cannot_follow(self):
+        first = board.add(self.conn, "first", to="alpha")
+        self.assertIn("one --to", self.refused("add", "x", "--follow", first, "--to", "alpha", "--to", "beta"))
+
+    def test_old_board_gains_the_fanout_column(self):
+        path = Path(self.tmp.name) / "old.db"
+        old = sqlite3.connect(path)
+        old.executescript(db.SCHEMA.replace("    fanout        TEXT,\n", ""))
+        old.close()
+        conn = db.connect(str(path))
+        self.addCleanup(conn.close)
+        self.assertIn("fanout", {c["name"] for c in conn.execute("PRAGMA table_info(tasks)")})
+        self.assertEqual(len(board.siblings(conn, board.add(conn, "x"))), 1)
+
+
 class BodyFileTest(Base):
     def add(self, *args, stdin=None):
         env = mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path})

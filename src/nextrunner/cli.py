@@ -10,12 +10,12 @@ from pathlib import Path
 
 from . import __version__
 from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
-from .board import ME, add, approve, beat, claim, claim_next, done, note, release, reopen
+from .board import ME, add, approve, beat, claim, claim_next, done, fan_out, note, release, reopen, siblings
 from .db import connect, get
 from .dispatcher import dispatch
 from .setup import doctor, init
 from . import paths
-from .view import FINISHED, parse_when, print_task, render_status, shown_status, stamp
+from .view import FINISHED, parse_when, print_task, render_compare, render_status, shown_status, stamp
 
 DOC = """\
 nextrunner: a shared task board for a team of AI agents.
@@ -58,7 +58,9 @@ def main(argv=None):
     body = sp.add_mutually_exclusive_group()
     body.add_argument("--body", default="", help="the brief: goal, folder, what is known, what done looks like")
     body.add_argument("--body-file", metavar="PATH", help="read the brief from a file, or from stdin with -")
-    sp.add_argument("--to", metavar="AGENT", help="agent this task is for; others take it only if that agent fails")
+    sp.add_argument("--to", action="append", metavar="AGENT",
+                    help="agent this task is for; others take it only if that agent fails. "
+                         "Given twice or more: one strict task per agent with the same brief (see compare)")
     sp.add_argument("--strict", action="store_true", help="with --to: never reroute, wait for that agent")
     sp.add_argument("--cwd", help="folder the agent starts in")
     sp.add_argument("--edit", action="store_true", help="let the agent change files in that folder (default: read-only)")
@@ -75,6 +77,9 @@ def main(argv=None):
     sp.add_argument("--until", metavar="DATE", help="only tasks last changed on or before DATE (a bare date means its whole day)")
     sp.add_argument("--json", action="store_true")
     sp = cmd("show", "show one task with its events", task=True)
+    sp.add_argument("--json", action="store_true")
+    sp = cmd("compare", "show every answer of a fan-out group (a task added with --to twice or more), one under another",
+             task=True)
     sp.add_argument("--json", action="store_true")
     sp = cmd("claim", "take a task", task=True, who=True)
     sp.add_argument("--ttl", type=float, default=900, help="seconds before the claim expires (default 900)")
@@ -125,8 +130,11 @@ def main(argv=None):
     if a.cmd == "dispatch" and a.jobs < 1:
         p.error("--jobs must be 1 or more")
     if a.cmd == "add":
+        a.to = list(dict.fromkeys(a.to or []))
         if a.strict and not (a.to or a.follow):
             p.error("--strict needs --to or --follow")
+        if len(a.to) > 1 and a.follow:
+            p.error("--follow continues one agent's session, so it takes one --to")
     if a.cmd == "add" and a.body_file:
         try:
             a.body = sys.stdin.read() if a.body_file == "-" else Path(a.body_file).read_text(encoding="utf-8")
@@ -164,7 +172,12 @@ def main(argv=None):
 
     if a.cmd == "add":
         need(a.follow is None or get(conn, a.follow), f"no task {a.follow}")
-        print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit, a.commit, a.follow, a.hold))
+        if len(a.to) > 1:
+            ids = fan_out(conn, a.title, a.body, a.to, cwd=a.cwd, by=a.by, edit=a.edit, commit=a.commit, hold=a.hold)
+            print("\n".join(ids))
+        else:
+            print(add(conn, a.title, a.body, a.to[0] if a.to else None, a.strict, a.cwd, a.by, a.edit, a.commit,
+                      a.follow, a.hold))
     elif a.cmd == "list":
         clauses, params = [], {}
         if not (a.all or a.since or a.until):
@@ -190,6 +203,13 @@ def main(argv=None):
             print(json.dumps(dict(task) | {"status": shown_status(task), "events": events}, indent=2))
         else:
             print_task(conn, task)
+    elif a.cmd == "compare":
+        tasks = siblings(conn, a.id)
+        need(tasks, f"no task {a.id}")
+        if a.json:
+            print(json.dumps([dict(t) | {"status": shown_status(t)} for t in tasks], indent=2))
+        else:
+            print(render_compare(tasks, shutil.get_terminal_size((100, 24)).columns))
     elif a.cmd == "claim":
         token = claim(conn, a.id, a.agent, a.ttl, a.steal)
         need(token, f"{a.id} is not free for {a.agent}")

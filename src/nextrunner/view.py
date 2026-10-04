@@ -38,6 +38,8 @@ def print_task(conn, task):
     print(f"  folder:   {task['cwd'] or '-'}")
     if task["follows"]:
         print(f"  follows:  {task['follows']}")
+    if task["fanout"]:
+        print(f"  fan-out:  {task['fanout']}; `nextrunner compare {task['id']}` shows every answer")
     print(f"  attempts: {task['attempts']}")
     if task["status"] == "ready" and task["held"]:
         print(f"  held:     waiting for approval; `nextrunner ok {task['id']}` lets it run")
@@ -49,6 +51,17 @@ def print_task(conn, task):
     for e in conn.execute("SELECT * FROM events WHERE task_id = ? ORDER BY id", (task["id"],)):
         text = "" if e["kind"] == "done" else e["text"]  # the result is printed above
         print(f"  {stamp(e['at'])}  {e['agent']:<14} {e['kind']:<9} {text}")
+
+
+def render_compare(tasks, width=100):
+    """The tasks of one fan-out group, one under another: who answered, how far it got, and the answer."""
+    lines = [f"{tasks[0]['title']}  ({len(tasks)} task{'s' * (len(tasks) != 1)})"]
+    for task in tasks:
+        who = task["claimed_by"] or task["assignee"] or "anyone"
+        lines += ["", "=" * width, f"{task['id']}  {who}  {shown_status(task)}"
+                  + (f"  {task['attempts']} failed attempt{'s' * (task['attempts'] != 1)}" if task["attempts"] else ""),
+                  "=" * width, task["result"] if task["result"] is not None else "(no result yet)"]
+    return "\n".join(lines)
 
 
 def ago(seconds):

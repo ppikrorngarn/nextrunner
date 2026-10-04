@@ -26,7 +26,7 @@ def new_task_id(t=None):
 
 
 def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False, commit=False, follows=None,
-        hold=False):
+        hold=False, fanout=None):
     edit = edit or commit  # committing the changes only makes sense if the agent may make them
     if follows:
         earlier = get(conn, follows)
@@ -43,8 +43,9 @@ def add(conn, title, body="", to=None, strict=False, cwd=None, by=ME, edit=False
             with tx(conn):
                 conn.execute(
                     "INSERT INTO tasks (id, title, body, cwd, assignee, strict, edit, commit_changes, follows, held, "
-                    "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), follows, int(hold), by, t, t),
+                    "fanout, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (task_id, title, body, cwd, to, int(strict), int(edit), int(commit), follows, int(hold), fanout,
+                     by, t, t),
                 )
                 log(conn, task_id, by, "created", f"to={to or 'anyone'}{' (strict)' if strict else ''}, {level}"
                     f"{f', follows {follows}' if follows else ''}{', held for approval' if hold else ''}")
@@ -116,6 +117,32 @@ def release(conn, task_id, agent, reason="", kind="released", token=None):
     """Hand a task back. kind='failed' also counts as an attempt."""
     sets = "status = 'ready', claimed_by = NULL, claim_expires = NULL, attempts = attempts + ?"
     return _owned(conn, task_id, agent, sets, (int(kind == "failed"),), kind, reason, token)
+
+
+def fan_out(conn, title, body, agents, **kw):
+    """One strict task per agent, all with the same brief, grouped so `compare` can show them side by side.
+
+    Returns the task IDs in the agents' order. The group is named after the first task.
+    """
+    ids = []
+    for agent in agents:
+        task_id = add(conn, title, body, to=agent, strict=True, fanout=ids[0] if ids else None, **kw)
+        ids.append(task_id)
+    with tx(conn):
+        conn.execute("UPDATE tasks SET fanout = ? WHERE id = ?", (ids[0], ids[0]))
+        for task_id in ids:
+            log(conn, task_id, kw.get("by", ME), "fan-out", "with " + ", ".join(i for i in ids if i != task_id))
+    return ids
+
+
+def siblings(conn, task_id):
+    """Every task in the fan-out group this task belongs to, oldest first; just the task when it has no group."""
+    task = get(conn, task_id)
+    if task is None:
+        return []
+    if not task["fanout"]:
+        return [task]
+    return conn.execute("SELECT * FROM tasks WHERE fanout = ? ORDER BY created_at, rowid", (task["fanout"],)).fetchall()
 
 
 def brief_hash(task):

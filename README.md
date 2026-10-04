@@ -32,6 +32,8 @@ nextrunner where                           # which files it uses; see "Where the
 nextrunner init                            # writes a starter agents.json; edit it (or: nextrunner init --agent mybot='mybot run')
 nextrunner doctor                          # checks that every agent's program exists and the settings make sense
 nextrunner add "Summarise the open issues" --body "Details here"
+nextrunner add "Review the change" --body-file brief.md --to agent-a --to agent-b   # a second opinion: one task per agent
+nextrunner compare <id>                                       # their answers, one under another
 nextrunner dispatch
 nextrunner list --all
 nextrunner status               # the board as text
@@ -110,6 +112,11 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
   next step), so a stopped run leaves more than an empty result.
 - **`--to NAME`** means the task is for that agent first. Other agents take
   it only if that agent fails. Add `--strict` to never reroute.
+- **Fan-out.** `--to` given twice or more makes one strict task per agent,
+  all with the same brief, grouped as a fan-out. `nextrunner compare <id>` prints
+  every answer in the group one under another (`--json` for scripts). A
+  fan-out cannot follow an earlier task, since a follow-up continues one
+  agent's session.
 - **Held for approval.** `nextrunner add --hold` makes a task that nobody may
   take, not the dispatcher, not `next`, not `claim`, until a person runs
   `nextrunner ok <id>`. Use it when an agent
