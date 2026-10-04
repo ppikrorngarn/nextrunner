@@ -674,6 +674,42 @@ class HooksTest(Base):
         self.assertTrue(path.read_text().startswith(f"done | {t} | alpha | from file"))
 
 
+class ListByDateTest(Base):
+    """nextrunner list --since / --until pick tasks by when they last changed."""
+
+    def run_list(self, *args):
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["list", *args])
+        return out.getvalue()
+
+    def test_dates_select_by_last_change_and_include_done_tasks(self):
+        old = board.add(self.conn, "old and done")
+        board.claim(self.conn, old, "alpha"); board.done(self.conn, old, "alpha", "ok")
+        self.conn.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (time.mktime((2026, 10, 5, 9, 0, 0, 0, 0, -1)), old))
+        recent = board.add(self.conn, "recent and done")
+        board.claim(self.conn, recent, "alpha"); board.done(self.conn, recent, "alpha", "ok")
+        self.conn.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (time.mktime((2026, 10, 6, 23, 59, 0, 0, 0, -1)), recent))
+        open_task = board.add(self.conn, "open")
+        self.conn.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (time.mktime((2026, 10, 7, 0, 0, 0, 0, 0, -1)), open_task))
+        day = self.run_list("--since", "2026-10-06", "--until", "2026-10-06")
+        self.assertIn(recent, day)
+        self.assertNotIn(old, day)
+        self.assertNotIn(open_task, day)  # changed at the very start of the next day
+        since = self.run_list("--since", "2026-10-06")
+        self.assertIn(recent, since); self.assertIn(open_task, since); self.assertNotIn(old, since)
+        until = self.run_list("--until", "2026-10-05 10:00")
+        self.assertEqual(until.count("t_"), 1); self.assertIn(old, until)
+        rows = json.loads(self.run_list("--since", "2026-10-05", "--until", "2026-10-07", "--json"))
+        self.assertEqual([r["id"] for r in rows], [old, recent, open_task])
+        self.assertEqual(self.run_list().count("t_"), 1)  # without dates, done tasks stay hidden
+
+    def test_bad_dates_are_refused(self):
+        for args in (["--since", "yesterday"], ["--since", "2026-10-07", "--until", "2026-10-06"]):
+            with self.subTest(args=args), self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()), \
+                    mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}):
+                cli.main(["list", *args])
+
+
 class HoldTest(Base):
     """A task added with --hold runs only after a person approves it."""
 

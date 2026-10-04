@@ -9,6 +9,19 @@ def stamp(t):
     return time.strftime("%m-%d %H:%M:%S", time.localtime(t))
 
 
+def parse_when(text, end=False):
+    """'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM' in local time -> seconds. A bare date means its start, or its end with end=True."""
+    text = text.strip()
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
+        try:
+            parts = time.strptime(text, fmt)
+        except ValueError:
+            continue
+        t = time.mktime(parts)
+        return t + 86400 if end and fmt == "%Y-%m-%d" else t
+    raise ValueError(f"{text!r} is not a date like 2026-10-07 or 2026-10-07 14:30")
+
+
 def shown_status(task):
     if task["status"] == "ready" and task["held"]:
         return "held"

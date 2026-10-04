@@ -1,5 +1,6 @@
 """The nextrunner command line."""
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -13,7 +14,7 @@ from .db import connect, get
 from .dispatcher import dispatch
 from .setup import doctor, init
 from . import paths
-from .view import FINISHED, print_task, render_status, shown_status, stamp
+from .view import FINISHED, parse_when, print_task, render_status, shown_status, stamp
 
 DOC = """\
 nextrunner: a shared task board for a team of AI agents.
@@ -67,7 +68,11 @@ def main(argv=None):
     sp.add_argument("--by", default=ME)
     sp = cmd("list", "list tasks")
     sp.add_argument("--all", action="store_true", help="include done tasks")
-    cmd("show", "show one task with its events", task=True)
+    sp.add_argument("--since", metavar="DATE", help="only tasks last changed on or after DATE (local; implies --all)")
+    sp.add_argument("--until", metavar="DATE", help="only tasks last changed on or before DATE (a bare date means its whole day)")
+    sp.add_argument("--json", action="store_true")
+    sp = cmd("show", "show one task with its events", task=True)
+    sp.add_argument("--json", action="store_true")
     sp = cmd("claim", "take a task", task=True, who=True)
     sp.add_argument("--ttl", type=float, default=900, help="seconds before the claim expires (default 900)")
     sp.add_argument("--steal", action="store_true", help="take it even if it is for another agent")
@@ -119,6 +124,14 @@ def main(argv=None):
     if a.cmd == "add":
         if a.strict and not (a.to or a.follow):
             p.error("--strict needs --to or --follow")
+    if a.cmd == "list":
+        try:
+            a.since = parse_when(a.since) if a.since else None
+            a.until = parse_when(a.until, end=True) if a.until else None
+        except ValueError as err:
+            p.error(str(err))
+        if a.since and a.until and a.since >= a.until:
+            p.error("--since must be before --until")
     if a.home:
         os.environ["NEXTRUNNER_HOME"] = a.home
     if a.cmd == "where":
@@ -143,19 +156,29 @@ def main(argv=None):
         print(add(conn, a.title, a.body, a.to, a.strict, a.cwd, a.by, a.edit, a.commit, a.follow, a.hold))
     elif a.cmd == "list":
         clauses, params = [], {}
-        if not a.all:
+        if not (a.all or a.since or a.until):
             clauses.append(f"status NOT IN {FINISHED}")
+        if a.since:
+            clauses.append("updated_at >= :since"); params["since"] = a.since
+        if a.until:
+            clauses.append("updated_at < :until"); params["until"] = a.until
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         tasks = conn.execute(f"SELECT * FROM tasks {where} ORDER BY created_at, rowid", params).fetchall()
+        if a.json:
+            print(json.dumps([dict(t) | {"status": shown_status(t)} for t in tasks], indent=2))
         id_width = max((len(t["id"]) for t in tasks), default=0)
-        for t in tasks:
+        for t in [] if a.json else tasks:
             who = t["claimed_by"] if t["status"] == "running" else (t["assignee"] or "anyone")
             level = "commit" if t["commit_changes"] else "edit" if t["edit"] else "read"
             print(f"{t['id']:<{id_width}}  {shown_status(t):<8} {who:<14} {level:<6} {t['title']}")
     elif a.cmd == "show":
         task = get(conn, a.id)
         need(task, f"no task {a.id}")
-        print_task(conn, task)
+        if a.json:
+            events = [dict(e) for e in conn.execute("SELECT * FROM events WHERE task_id = ? ORDER BY id", (a.id,))]
+            print(json.dumps(dict(task) | {"status": shown_status(task), "events": events}, indent=2))
+        else:
+            print_task(conn, task)
     elif a.cmd == "claim":
         token = claim(conn, a.id, a.agent, a.ttl, a.steal)
         need(token, f"{a.id} is not free for {a.agent}")
