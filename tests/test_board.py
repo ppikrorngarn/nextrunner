@@ -716,6 +716,22 @@ class FanOutTest(Base):
         first = board.add(self.conn, "first", to="alpha")
         self.assertIn("one --to", self.refused("add", "x", "--follow", first, "--to", "alpha", "--to", "beta"))
 
+    def test_fill_replaces_placeholders_and_refuses_leftovers(self):
+        brief = Path(self.tmp.name) / "brief.md"
+        brief.write_text("Review {PR_URL} for {TICKET}.\nContext: {CONTEXT}\nKeep {not_a_placeholder}.")
+        ctx = Path(self.tmp.name) / "ctx.txt"
+        ctx.write_text("from a file\n")
+        err = self.refused("add", "x", "--body-file", str(brief), "--fill", "PR_URL=http://p")
+        self.assertIn("{CONTEXT}", err); self.assertIn("{TICKET}", err); self.assertNotIn("PR_URL", err)
+        t = self.cli("add", "x", "--body-file", str(brief), "--fill", "PR_URL=http://p", "--fill", "TICKET=ABC-1",
+                     "--fill", f"CONTEXT=@{ctx}").strip()
+        self.assertEqual(db.get(self.conn, t)["body"],
+                         "Review http://p for ABC-1.\nContext: from a file\nKeep {not_a_placeholder}.")
+        self.assertIn("KEY=VALUE", self.refused("add", "x", "--body", "{A}", "--fill", "lower=1"))
+        self.assertIn("No such file", self.refused("add", "x", "--body", "{A}", "--fill", "A=@/no/such"))
+        t = self.cli("add", "x", "--body", "no braces", "--fill", "UNUSED=1").strip()  # an extra fill is harmless
+        self.assertEqual(db.get(self.conn, t)["body"], "no braces")
+
     def test_old_board_gains_the_fanout_column(self):
         path = Path(self.tmp.name) / "old.db"
         old = sqlite3.connect(path)

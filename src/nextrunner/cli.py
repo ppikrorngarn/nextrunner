@@ -10,12 +10,16 @@ from pathlib import Path
 
 from . import __version__
 from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
+import re
+
 from .board import ME, add, approve, beat, claim, claim_next, done, fan_out, note, release, reopen, siblings
 from .db import connect, get
 from .dispatcher import dispatch
 from .setup import doctor, init
 from . import paths
 from .view import FINISHED, parse_when, print_task, render_compare, render_status, shown_status, stamp
+
+PLACEHOLDER = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")  # {LIKE_THIS} in a brief file, filled with --fill
 
 DOC = """\
 nextrunner: a shared task board for a team of AI agents.
@@ -58,6 +62,9 @@ def main(argv=None):
     body = sp.add_mutually_exclusive_group()
     body.add_argument("--body", default="", help="the brief: goal, folder, what is known, what done looks like")
     body.add_argument("--body-file", metavar="PATH", help="read the brief from a file, or from stdin with -")
+    sp.add_argument("--fill", action="append", default=[], metavar="KEY=VALUE",
+                    help="replace {KEY} in the brief with VALUE, or with a file's text when VALUE is @PATH; repeatable. "
+                         "A {KEY} left unfilled is refused")
     sp.add_argument("--to", action="append", metavar="AGENT",
                     help="agent this task is for; others take it only if that agent fails. "
                          "Given twice or more: one strict task per agent with the same brief (see compare)")
@@ -143,6 +150,22 @@ def main(argv=None):
         a.body = a.body.strip()
         if not a.body:
             p.error("--body-file: the file is empty")
+    if a.cmd == "add" and (a.fill or a.body_file):
+        fills = {}
+        for item in a.fill:
+            key, sep, value = item.partition("=")
+            if not sep or not PLACEHOLDER.fullmatch("{" + key + "}"):
+                p.error(f"--fill wants KEY=VALUE with KEY like PR_URL, not {item!r}")
+            if value.startswith("@"):
+                try:
+                    value = Path(value[1:]).read_text(encoding="utf-8").strip()
+                except OSError as err:
+                    p.error(f"--fill {key}: {err}")
+            fills[key] = value
+        a.body = PLACEHOLDER.sub(lambda m: fills.get(m.group(1), m.group(0)), a.body)
+        left = sorted({m.group(1) for m in PLACEHOLDER.finditer(a.body)})
+        if left:
+            p.error("the brief still has " + ", ".join("{" + k + "}" for k in left) + "; fill each with --fill KEY=VALUE")
     if a.cmd == "list":
         try:
             a.since = parse_when(a.since) if a.since else None
