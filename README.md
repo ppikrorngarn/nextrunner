@@ -32,10 +32,12 @@ nextrunner where                           # which files it uses; see "Where the
 nextrunner init                            # writes a starter agents.json; edit it (or: nextrunner init --agent mybot='mybot run')
 nextrunner doctor                          # checks that every agent's program exists and the settings make sense
 nextrunner add "Summarise the open issues" --body "Details here"
+nextrunner add "Review the change" --body-file brief.md      # a long brief from a file (or - for stdin)
 nextrunner add "Review the change" --body-file brief.md --to agent-a --to agent-b   # a second opinion: one task per agent
 nextrunner compare <id>                                       # their answers, one under another
 nextrunner dispatch
 nextrunner list --all
+nextrunner list --since 2026-10-06 --until 2026-10-06   # what changed that day, done tasks included
 nextrunner status               # the board as text
 ```
 
@@ -117,6 +119,12 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
   every answer in the group one under another (`--json` for scripts). A
   fan-out cannot follow an earlier task, since a follow-up continues one
   agent's session.
+- **Fill a brief file.** `--fill KEY=VALUE` replaces `{KEY}` in the brief
+  (`@PATH` takes the value from a file). `add` refuses a brief that still
+  has a `{PLACEHOLDER}`, so a template is never sent half filled.
+- **Edit needs a folder.** `--edit` and `--commit` are refused without
+  `--cwd` (or `--follow`, which inherits one): an agent that may change
+  files must be told where.
 - **Held for approval.** `nextrunner add --hold` makes a task that nobody may
   take, not the dispatcher, not `next`, not `claim`, until a person runs
   `nextrunner ok <id>`. Use it when an agent
