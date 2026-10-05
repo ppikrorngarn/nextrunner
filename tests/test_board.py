@@ -716,6 +716,12 @@ class FanOutTest(Base):
         first = board.add(self.conn, "first", to="alpha")
         self.assertIn("one --to", self.refused("add", "x", "--follow", first, "--to", "alpha", "--to", "beta"))
 
+    def test_edit_needs_a_folder(self):
+        self.assertIn("need --cwd", self.refused("add", "x", "--edit"))
+        self.assertIn("need --cwd", self.refused("add", "x", "--commit"))
+        first = board.add(self.conn, "first", to="alpha", cwd=self.tmp.name)
+        self.cli("add", "x", "--edit", "--follow", first)  # a follow-up inherits the folder
+
     def test_fill_replaces_placeholders_and_refuses_leftovers(self):
         brief = Path(self.tmp.name) / "brief.md"
         brief.write_text("Review {PR_URL} for {TICKET}.\nContext: {CONTEXT}\nKeep {not_a_placeholder}.")

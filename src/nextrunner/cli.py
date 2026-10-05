@@ -142,6 +142,8 @@ def main(argv=None):
             p.error("--strict needs --to or --follow")
         if len(a.to) > 1 and a.follow:
             p.error("--follow continues one agent's session, so it takes one --to")
+        if (a.edit or a.commit) and not (a.cwd or a.follow):
+            p.error("--edit and --commit need --cwd, the folder the agent may change")
     if a.cmd == "add" and a.body_file:
         try:
             a.body = sys.stdin.read() if a.body_file == "-" else Path(a.body_file).read_text(encoding="utf-8")
