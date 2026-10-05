@@ -96,7 +96,7 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
 
 ## How tasks move
 
-- A task is `ready`, `running`, `done` or `blocked`.
+- A task is `ready`, `running`, `done`, `blocked` or `cancelled`.
 - **Task IDs** look like `t_0e8d4ba639`: six base-36 digits of seconds
   since 2026 (so IDs sort by creation time) and four random ones. Two IDs
   can only match within the same second; `add` then draws again.
@@ -125,6 +125,14 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
 - **Edit needs a folder.** `--edit` and `--commit` are refused without
   `--cwd` (or `--follow`, which inherits one): an agent that may change
   files must be told where.
+- **Cancel.** `nextrunner cancel <id> [--reason TEXT]` takes a task off the board
+  for good when it is ready (held or not), blocked, or its run died. A task
+  someone is running is left alone: wait, or let its claim expire. Cancelled
+  tasks leave `list` and the open board like done ones (`--all` and `--since`
+  still show them), and `nextrunner reopen` brings one back. The
+  first time a board made before this command is opened, its tasks table is
+  rebuilt to allow the new status, and a copy named `board.db.before-cancel`
+  is left next to it.
 - **Held for approval.** `nextrunner add --hold` makes a task that nobody may
   take, not the dispatcher, not `next`, not `claim`, until a person runs
   `nextrunner ok <id>`. Use it when an agent

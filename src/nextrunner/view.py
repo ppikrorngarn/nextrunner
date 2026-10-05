@@ -81,8 +81,8 @@ def row_cells(task, state, t):
     return who, level, f"{ago(t - task['last_at'])} ago", left
 
 
-STATE_ORDER = ["STALE", "running", "expired", "ready", "held", "blocked", "done"]
-FINISHED = "('done')"  # statuses that leave the open list
+STATE_ORDER = ["STALE", "running", "expired", "ready", "held", "blocked", "done", "cancelled"]
+FINISHED = "('done', 'cancelled')"  # statuses that leave the open list
 
 
 def board_view(conn, stale_min=15, show_all=False):
@@ -106,7 +106,7 @@ def board_view(conn, stale_min=15, show_all=False):
         head = f"{task['id']:<{id_width}}  {state:<8} {who:<14} {level:<6} {last:<9} {left:<9} "
         rows.append((task, state, head))
     recent = "" if show_all else " in the last hour"
-    summary = ", ".join(f"{counts[k]} {k.lower() if k != 'done' else k + recent}"
+    summary = ", ".join(f"{counts[k]} {k.lower() if k not in ('done', 'cancelled') else k + recent}"
                         for k in STATE_ORDER if k in counts)
     return t, rows, summary or "board is empty"
 
@@ -121,7 +121,8 @@ def recent_events(conn, limit=5, width=100):
 
 def render_status(conn, stale_min=15, width=100, color=False):
     """The board as text: open tasks, tasks done in the last hour, resting agents, latest events."""
-    paint = {"running": "36", "ready": "0", "held": "35", "blocked": "31", "expired": "33", "STALE": "33;1", "done": "32"}
+    paint = {"running": "36", "ready": "0", "held": "35", "blocked": "31", "expired": "33", "STALE": "33;1", "done": "32",
+             "cancelled": "2"}
 
     def colored(text, key):
         return f"\033[{paint.get(key, '0')}m{text}\033[0m" if color else text

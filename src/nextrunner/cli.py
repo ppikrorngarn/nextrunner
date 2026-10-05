@@ -12,7 +12,7 @@ from . import __version__
 from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
 import re
 
-from .board import ME, add, approve, beat, claim, claim_next, done, fan_out, note, release, reopen, siblings
+from .board import ME, add, approve, beat, cancel, claim, claim_next, done, fan_out, note, release, reopen, siblings
 from .db import connect, get
 from .dispatcher import dispatch
 from .setup import doctor, init
@@ -79,7 +79,7 @@ def main(argv=None):
                     help="nobody may take the task until a person runs `nextrunner ok <id>`; for work that acts outside the machine")
     sp.add_argument("--by", default=ME)
     sp = cmd("list", "list tasks")
-    sp.add_argument("--all", action="store_true", help="include done tasks")
+    sp.add_argument("--all", action="store_true", help="include done and cancelled tasks")
     sp.add_argument("--since", metavar="DATE", help="only tasks last changed on or after DATE (local; implies --all)")
     sp.add_argument("--until", metavar="DATE", help="only tasks last changed on or before DATE (a bare date means its whole day)")
     sp.add_argument("--json", action="store_true")
@@ -105,7 +105,10 @@ def main(argv=None):
     sp = cmd("release", "hand back a task you hold", task=True, who=True)
     sp.add_argument("--reason", default="")
     sp.add_argument("--token", help=token_help)
-    cmd("reopen", "put a blocked or done task back to ready", task=True)
+    cmd("reopen", "put a blocked, done or cancelled task back to ready", task=True)
+    sp = cmd("cancel", "take a task off the board: one that is ready, held, blocked, or whose run died", task=True)
+    sp.add_argument("--reason", default="")
+    sp.add_argument("--by", default=ME)
     sp = cmd("ok", "approve a task added with --hold, so an agent may take it", task=True)
     sp.add_argument("--by", default=ME)
     sp = cmd("agents", "show which agents the dispatcher can start")
@@ -254,7 +257,10 @@ def main(argv=None):
     elif a.cmd == "release":
         need(release(conn, a.id, a.agent, a.reason, token=a.token), f"{a.agent} does not hold {a.id}")
     elif a.cmd == "reopen":
-        need(reopen(conn, a.id), f"{a.id} is not blocked or done")
+        need(reopen(conn, a.id), f"{a.id} is not blocked, done or cancelled")
+    elif a.cmd == "cancel":
+        need(get(conn, a.id), f"no task {a.id}")
+        need(cancel(conn, a.id, a.by, a.reason), f"{a.id} is running, done or already cancelled")
     elif a.cmd == "ok":
         need(get(conn, a.id), f"no task {a.id}")
         need(approve(conn, a.id, a.by), f"{a.id} is not held")

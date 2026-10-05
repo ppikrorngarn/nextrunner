@@ -161,11 +161,28 @@ def approve(conn, task_id, by=ME):
     return ok
 
 
+def cancel(conn, task_id, by=ME, reason=""):
+    """Take a task off the board for good: from ready (held or not), blocked, or a run whose claim expired.
+
+    A task someone is running, a done task and a cancelled task are left alone. `reopen` undoes it.
+    """
+    with tx(conn):
+        ok = conn.execute(
+            "UPDATE tasks SET status = 'cancelled', claimed_by = NULL, claim_expires = NULL, held = 0, "
+            "updated_at = :now WHERE id = :id AND (status IN ('ready', 'blocked') "
+            "OR (status = 'running' AND claim_expires < :now))",
+            {"now": now(), "id": task_id},
+        ).rowcount == 1
+        if ok:
+            log(conn, task_id, by, "cancelled", reason)
+    return ok
+
+
 def reopen(conn, task_id, by=ME):
     with tx(conn):
         ok = conn.execute(
             "UPDATE tasks SET status = 'ready', claimed_by = NULL, claim_expires = NULL, attempts = 0, "
-            "updated_at = ? WHERE id = ? AND status IN ('blocked', 'done')",
+            "updated_at = ? WHERE id = ? AND status IN ('blocked', 'done', 'cancelled')",
             (now(), task_id),
         ).rowcount == 1
         if ok:

@@ -613,6 +613,90 @@ class TraceTest(Base):
         self.assertRegex(out.getvalue(), r"alpha\s+run\s+\d+s exit=0 log=")
 
 
+class CancelTest(Base):
+    """nextrunner cancel takes a task off the board; reopen brings it back."""
+
+    def test_cancel_from_ready_held_blocked_and_expired(self):
+        ready = board.add(self.conn, "ready")
+        held = board.add(self.conn, "held", hold=True)
+        blocked = board.add(self.conn, "blocked")
+        self.conn.execute("UPDATE tasks SET status = 'blocked' WHERE id = ?", (blocked,))
+        died = board.add(self.conn, "died", to="alpha")
+        board.claim(self.conn, died, "alpha", ttl=0.01)
+        time.sleep(0.05)
+        for t in (ready, held, blocked, died):
+            with self.subTest(t):
+                self.assertTrue(board.cancel(self.conn, t, by="wasin", reason="changed my mind"))
+                task = db.get(self.conn, t)
+                self.assertEqual((task["status"], task["claimed_by"], task["held"]), ("cancelled", None, 0))
+                self.assertEqual(view.shown_status(task), "cancelled")
+                self.assertIn(("wasin", "cancelled"), self.kinds(t))
+        self.dispatch({"alpha": OK})  # nothing to run
+        self.assertEqual({self.status(t) for t in (ready, held, blocked, died)}, {"cancelled"})
+
+    def test_running_done_and_cancelled_tasks_are_left_alone(self):
+        running = board.add(self.conn, "running")
+        board.claim(self.conn, running, "alpha", ttl=600)
+        done = board.add(self.conn, "done")
+        board.claim(self.conn, done, "alpha"); board.done(self.conn, done, "alpha", "ok")
+        gone = board.add(self.conn, "gone")
+        board.cancel(self.conn, gone)
+        for t in (running, done, gone):
+            with self.subTest(t):
+                self.assertFalse(board.cancel(self.conn, t))
+        self.assertEqual(self.status(running), "running")
+
+    def test_reopen_undoes_a_cancel(self):
+        t = board.add(self.conn, "x")
+        board.cancel(self.conn, t)
+        self.assertTrue(board.reopen(self.conn, t))
+        self.assertEqual(self.status(t), "ready")
+        self.dispatch({"alpha": OK})
+        self.assertEqual(self.status(t), "done")
+
+    def test_cancelled_tasks_leave_the_lists_like_done_ones(self):
+        gone, kept = board.add(self.conn, "gone"), board.add(self.conn, "kept")
+        board.cancel(self.conn, gone)
+        env = mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path})
+        with env, contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["list"])
+        self.assertNotIn(gone, out.getvalue()); self.assertIn(kept, out.getvalue())
+        with env, contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["list", "--all"])
+        self.assertIn("cancelled", out.getvalue())
+        screen = view.render_status(self.conn, width=200)
+        self.assertIn("1 ready, 1 cancelled in the last hour", screen)
+        self.conn.execute("UPDATE tasks SET updated_at = updated_at - 7200 WHERE id = ?", (gone,))
+        self.assertNotIn(gone, view.render_status(self.conn, width=200).split("latest:")[0])
+        with env, contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["cancel", kept, "--reason", "nah", "--by", "wasin"])
+        self.assertEqual(self.status(kept), "cancelled")
+        with env, self.assertRaises(SystemExit) as stop:
+            cli.main(["cancel", kept])
+        self.assertIn("already cancelled", str(stop.exception))
+
+    def test_old_board_is_rebuilt_to_allow_cancelled(self):
+        path = Path(self.tmp.name) / "old.db"
+        old = sqlite3.connect(path)
+        old.executescript(db.SCHEMA.replace("'blocked', 'cancelled'", "'blocked'"))
+        old.execute("INSERT INTO tasks (id, title, created_by, created_at, updated_at, status, result) "
+                    "VALUES ('t_old1', 'kept', 'human', 1, 1, 'done', 'the answer')")
+        old.execute("INSERT INTO events (task_id, at, agent, kind, text) VALUES ('t_old1', 1, 'alpha', 'done', 'the answer')")
+        old.commit(); old.close()
+        conn = db.connect(str(path))
+        self.addCleanup(conn.close)
+        self.assertIn("'cancelled'", conn.execute("SELECT sql FROM sqlite_master WHERE name = 'tasks'").fetchone()["sql"])
+        self.assertEqual(db.get(conn, "t_old1")["result"], "the answer")
+        self.assertEqual(conn.execute("SELECT count(*) FROM events WHERE task_id = 't_old1'").fetchone()[0], 1)
+        self.assertTrue(path.with_name("old.db.before-cancel").exists())
+        t = board.add(conn, "new one")
+        self.assertTrue(board.cancel(conn, t))
+        # A second open does not rebuild again or touch the backup.
+        before = path.with_name("old.db.before-cancel").stat().st_mtime
+        db.connect(str(path)).close()
+        self.assertEqual(path.with_name("old.db.before-cancel").stat().st_mtime, before)
+
+
 class HooksTest(Base):
     """$hooks in agents.json: a command per outcome, run after the board is written."""
 
