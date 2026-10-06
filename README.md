@@ -61,6 +61,8 @@ terminal narrower than 110 columns the detail pane moves under the list.
 | / | Filter by title, agent, id or state. Enter keeps the filter, Esc clears it |
 | a | Add a task in a form: title, agent, strict, level (read, edit, commit), folder, brief; Ctrl+S adds, Esc cancels |
 | f | Add a follow-up to the selected task (same agent and folder, resumes its session) |
+| y | Approve the selected task if it was added held, so an agent may take it |
+| x | Cancel the selected task if nobody is running it; o reopens it |
 | o | Reopen the selected task |
 | d | Start a dispatcher pass in the background (asks for `--jobs`); output goes to the dispatch log |
 | p | Pause an agent for some minutes, or resume it (a form with Pause and Resume buttons) |
@@ -161,7 +163,7 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
   is left next to it.
 - **Held for approval.** `nextrunner add --hold` makes a task that nobody may
   take, not the dispatcher, not `next`, not `claim`, until a person runs
-  `nextrunner ok <id>`. Use it when an agent
+  `nextrunner ok <id>` (or presses `y` on it in `nextrunner ui`). Use it when an agent
   drafts work that acts outside the machine, such as a message to post: the
   draft goes on the board held, you read it, and your `ok` is an `approved`
   event on the task with a fingerprint of the brief it covered. A held task

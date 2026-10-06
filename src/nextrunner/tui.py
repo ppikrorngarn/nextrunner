@@ -19,7 +19,7 @@ from textual.widgets import Button, Checkbox, DataTable, Footer, Input, Label, M
 
 from . import paths
 from .agents import is_up, load_agents, set_down, set_up
-from .board import reopen
+from .board import approve, cancel, reopen
 from .db import get
 from .dispatcher import self_command
 from .forms import add_from_answers
@@ -73,6 +73,7 @@ class AddScreen(ModalScreen):
                 yield Input(os.getcwd(), compact=True, id="cwd")
             yield Label("Brief")
             yield Input(id="body", placeholder="details, what done looks like", compact=True)
+            yield Checkbox("Hold until approved (y on the board lets it run)", value=False, compact=True, id="hold")
             with Horizontal(id="buttons"):
                 yield Button("Add (ctrl+s)", variant="primary", compact=True, id="add")
                 yield Button("Cancel (esc)", compact=True, id="cancel")
@@ -85,7 +86,8 @@ class AddScreen(ModalScreen):
             found = self.query(f"#{name}")
             return found.first().value if found else default
         self.dismiss({"title": value("title"), "to": value("to") or "", "strict": "y" if value("strict", False) else "n",
-                      "level": value("level", "r"), "cwd": value("cwd"), "body": value("body")})
+                      "level": value("level", "r"), "cwd": value("cwd"), "body": value("body"),
+                      "hold": "y" if value("hold", False) else "n"})
 
     def on_button_pressed(self, event):
         self.dismiss(None) if event.button.id == "cancel" else self.action_submit()
@@ -228,6 +230,8 @@ class TaskDetail(VerticalScroll):
             parts.append(f"follows {task['follows']}")
         if task["fanout"]:
             parts.append(f"fan-out {task['fanout']}")
+        if task["status"] == "ready" and task["held"]:
+            parts.append("held: y approves")
         lines = ["  ·  ".join(parts)]
         if task["cwd"]:
             lines.append(task["cwd"])
@@ -336,6 +340,8 @@ class BoardApp(App):
     BINDINGS = [
         Binding("a", "add", "Add"),
         Binding("f", "follow_up", "Follow-up"),
+        Binding("y", "approve", "Approve"),
+        Binding("x", "cancel", "Cancel"),
         Binding("o", "reopen", "Reopen"),
         Binding("d", "dispatch", "Dispatch"),
         Binding("p", "pause", "Pause/resume"),
@@ -577,10 +583,23 @@ class BoardApp(App):
                 self.refresh_board()
         self.push_screen(AddScreen(self.agents(), follows=earlier), finish)
 
+    def action_approve(self):
+        if self.selected:
+            ok = approve(self.conn, self.selected)
+            self.say(f"approved {self.selected}; the next dispatch may run it" if ok else f"{self.selected} is not held")
+            self.refresh_board()
+
+    def action_cancel(self):
+        if self.selected:
+            ok = cancel(self.conn, self.selected, reason="from the board")
+            self.say(f"cancelled {self.selected} (o reopens it)" if ok
+                     else f"{self.selected} is running, done or already cancelled")
+            self.refresh_board()
+
     def action_reopen(self):
         if self.selected:
             ok = reopen(self.conn, self.selected)
-            self.say(f"reopened {self.selected}" if ok else f"{self.selected} is not blocked or done")
+            self.say(f"reopened {self.selected}" if ok else f"{self.selected} is not blocked, done or cancelled")
             self.refresh_board()
 
     def action_dispatch(self):

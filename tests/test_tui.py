@@ -177,6 +177,33 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((follow["follows"], follow["assignee"], follow["strict"]), (self.first, "alpha", 1))
             self.assertEqual(follow["cwd"], self.tmp.name)
 
+    async def test_y_approves_a_held_task(self):
+        held = board.add(self.conn, "held draft", hold=True)
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            self.assertIn("1 held", text_of(app.query_one("#chips")))
+            await pilot.press("down", "down")  # the held task is the newest, so it is last
+            await pilot.pause()
+            self.assertEqual(app.selected, held)
+            await pilot.press("y")
+            await pilot.pause()
+            self.assertEqual(board.get(self.conn, held)["held"], 0)
+            self.assertNotIn("held", text_of(app.query_one("#chips")))
+
+    async def test_x_cancels_the_selected_task(self):
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            self.assertEqual(app.selected, self.first)
+            await pilot.press("x")
+            await pilot.pause()
+            self.assertEqual(board.get(self.conn, self.first)["status"], "cancelled")
+            self.assertIn("1 cancelled", text_of(app.query_one("#chips")))
+            await pilot.press("o")  # the row is still on the board for an hour, so o brings it back
+            await pilot.pause()
+            self.assertEqual(board.get(self.conn, self.first)["status"], "ready")
+
     async def test_reopen_a_blocked_task(self):
         self.conn.execute("UPDATE tasks SET status = 'blocked' WHERE id = ?", (self.first,))
         app = self.app()

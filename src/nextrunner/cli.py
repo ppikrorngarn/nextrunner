@@ -135,7 +135,7 @@ def main(argv=None):
     sp.add_argument("--force", action="store_true", help="replace an existing agents.json")
     cmd("doctor", "check agents.json: programs exist, placeholders and reply modes are valid")
     cmd("where", "show which files nextrunner is using, and why")
-    sp = cmd("ui", "full-screen board you can act on: add, follow up, reopen, dispatch, pause")
+    sp = cmd("ui", "full-screen board you can act on: add, follow up, approve, cancel, reopen, dispatch, pause")
     sp.add_argument("--stale", type=float, default=15, metavar="MINUTES")
 
     a = p.parse_args(argv)
