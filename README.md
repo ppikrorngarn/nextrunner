@@ -58,17 +58,20 @@ terminal narrower than 110 columns the detail pane moves under the list.
 |---|---|
 | ↑ ↓ (or j k) | Move between tasks |
 | Enter | Open the task full screen, in the same colours: the whole brief and result as Markdown and every event, kept up to date while it runs; Esc or ← goes back, q quits |
+| / | Filter by title, agent, id or state. Enter keeps the filter, Esc clears it |
 | a | Add a task in a form: title, agent, strict, level (read, edit, commit), folder, brief; Ctrl+S adds, Esc cancels |
 | f | Add a follow-up to the selected task (same agent and folder, resumes its session) |
 | o | Reopen the selected task |
 | d | Start a dispatcher pass in the background (asks for `--jobs`); output goes to the dispatch log |
 | p | Pause an agent for some minutes, or resume it (a form with Pause and Resume buttons) |
 | t | Switch between open tasks plus the last hour, and every task |
+| Ctrl+P | Command palette, including themes. The theme and the `t` choice are remembered in `ui.json` next to `agents.json` |
 | q | Quit. A dispatcher started from the UI keeps running |
 
 The top shows a count chip for each state (● running, ◐ stale, ◌ expired, ○ ready, ✗ blocked,
 ✓ done) and each agent as up with its runs against its `parallel` limit, or resting with the
-time left.
+time left. A toast appears when a task finishes, blocks or goes stale. A yellow `sandbox` chip
+shows when `NEXTRUNNER_HOME` or another file override is active, so you know it is not your real board.
 
 ## Where the files live
 

@@ -1,4 +1,5 @@
 """The full-screen board, driven with Textual's test pilot (no terminal needed)."""
+import asyncio
 import io
 import json
 import os
@@ -251,6 +252,72 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app.query_one("#d-body").source.startswith("## Done"))
             self.assertIn("Result", text_of(app.query_one("#d-label")))
 
+    async def test_markdown_waits_for_a_pane_with_width(self):
+        # A pty that never reports a window size is 0x0, and Textual's Markdown loops forever at width 0
+        # (the packaging smoke test covers the real thing). So nothing is rendered until the pane has
+        # width, and the result still appears once it does.
+        token = board.claim(self.conn, self.first, "alpha")
+        board.done(self.conn, self.first, "alpha", "## Done\n\nsome **result** text", token)
+        app = self.app()
+        app.selected = self.first  # a finished task sorts last, so select it by hand
+
+        async def run():
+            async with app.run_test(size=(1, 1)) as pilot:
+                await pilot.pause()
+                before = app.query_one("#d-body").source
+                await pilot.resize_terminal(120, 40)
+                await pilot.pause(0.5)  # the pane looks again after 0.2 s
+                return before, app.query_one("#d-body").source
+        before, after = await asyncio.wait_for(run(), 30)
+        self.assertEqual(before, "")
+        self.assertTrue(after.startswith("## Done"))
+
+    async def test_filter_narrows_the_list_and_escape_clears_it(self):
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("slash", *"alpha")
+            await pilot.pause()
+            table = app.query_one(DataTable)
+            self.assertEqual(table.row_count, 1)  # only the task for alpha
+            self.assertEqual(app.selected, self.first)
+            self.assertIn("filter: alpha (1/2)", text_of(app.query_one("#title")))
+            await pilot.press("enter")  # keeps the filter, returns to the list
+            await pilot.pause()
+            self.assertEqual(table.row_count, 1)
+            self.assertIs(app.focused, table)
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertEqual(table.row_count, 2)
+            self.assertNotIn("filter", text_of(app.query_one("#title")))
+
+    async def test_a_filter_with_no_match_says_so(self):
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("slash", *"zzz")
+            await pilot.pause()
+            self.assertEqual(app.query_one(DataTable).row_count, 0)
+            self.assertIn("nothing matches", text_of(app.query_one("#d-head")))
+
+    async def test_toasts_when_a_task_finishes_or_blocks_but_not_on_first_look(self):
+        app = self.app()
+        toasts = []
+        app.notify = lambda message, **kw: toasts.append((kw.get("title"), message))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            self.assertEqual(toasts, [])  # the first look at the board says nothing
+            token = board.claim(self.conn, self.first, "alpha")
+            board.done(self.conn, self.first, "alpha", "ok", token)
+            self.conn.execute("UPDATE tasks SET status = 'blocked' WHERE id = ?", (self.second,))
+            app.refresh_board()
+            await pilot.pause()
+            self.assertEqual(sorted(title for title, _ in toasts), ["✓ done", "✗ blocked"])
+            self.assertIn(self.first, dict((t, m) for t, m in toasts)["✓ done"])
+            app.refresh_board()
+            await pilot.pause()
+            self.assertEqual(len(toasts), 2)  # no repeat
+
     async def test_layout_follows_the_width(self):
         app = self.app()
         async with app.run_test(size=(140, 40)) as pilot:
@@ -268,6 +335,27 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 await pilot.pause()
                 self.assertEqual(app.query_one(DataTable).max_scroll_x, 0, width)
+
+    async def test_theme_and_view_are_remembered(self):
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.theme = "nord"
+            await pilot.press("t")
+            await pilot.pause()
+        saved = json.loads((Path(self.tmp.name) / "ui.json").read_text())
+        self.assertEqual(saved, {"theme": "nord", "show_all": True})
+        again = self.app()
+        async with again.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            self.assertEqual((again.theme, again.show_all), ("nord", True))
+
+    async def test_a_bad_saved_theme_falls_back(self):
+        (Path(self.tmp.name) / "ui.json").write_text('{"theme": "no-such-theme"}')
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            self.assertEqual(app.theme, tui.DEFAULT_THEME)
 
     async def test_no_agents_file_says_how_to_fix_it(self):
         (Path(self.tmp.name) / "agents.json").unlink()

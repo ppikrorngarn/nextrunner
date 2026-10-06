@@ -3,6 +3,7 @@
 The dispatcher it starts is a separate process that keeps going if the UI is
 closed; its output goes to the dispatch log (`nextrunner where` shows the path).
 """
+import json
 import os
 import subprocess
 import time
@@ -33,6 +34,7 @@ KIND_STYLE = {"created": "dim", "claimed": "cyan", "note": "yellow", "done": "gr
               "beat": "dim", "session": "dim", "approved": "green", "fan-out": "dim", "cancelled": "dim", "hook": "red",
               "run": "dim"}
 LEVELS = [("read only", "r"), ("edit files in the folder", "e"), ("edit, and the dispatcher commits", "c")]
+DEFAULT_THEME = "tokyo-night"
 NARROW = 110  # below this many columns the detail pane moves under the task list
 
 
@@ -183,16 +185,27 @@ class TaskDetail(VerticalScroll):
         yield Static(id="d-events")
 
     def set_markdown(self, name, text):
-        """Show Markdown text, or hide the section when there is none. Skips a render that would change nothing."""
+        """Show Markdown text, or hide the section when there is none. Skips a render that would change nothing,
+        and never renders into a pane with no width: Textual's Markdown loops forever at width 0, which is what
+        a terminal that reports no size gives."""
         widget = self.query_one(f"#{name}", Markdown)
         widget.display = bool(text)
         if getattr(self, "_rendered", {}).get(name) == text:
-            return
+            return True
+        if text and self.size.width < 10:
+            return False
         widget.update(text or "")
         self.__dict__.setdefault("_rendered", {})[name] = text
+        return True
+
+    def on_resize(self, event):
+        """The pane has a size now: draw what was held back (what was last asked for, not an older task)."""
+        if getattr(self, "_pending", False) and getattr(self, "_wanted", None):
+            self.show(*self._wanted)
 
     def show_message(self, head, body=""):
         """Nothing to show: a note in the title, and optionally some Markdown under it."""
+        self._wanted, self._pending = None, False
         self.query_one("#d-head").update(Text(head, style="dim"))
         for name in ("d-meta", "d-label", "d-label2", "d-events-label", "d-events"):
             self.query_one(f"#{name}").update("")
@@ -201,6 +214,7 @@ class TaskDetail(VerticalScroll):
 
     def show(self, conn, task_id, full=False):
         """Fill the pane. full=True shows the brief and the result both, and every event."""
+        self._wanted = (conn, task_id, full)
         task = get(conn, task_id)
         self.query_one("#d-head").update(Text(task["title"]))
         parts = [task["id"], f"for {task['assignee'] or 'anyone'}{' (strict)' if task['strict'] else ''}",
@@ -227,11 +241,13 @@ class TaskDetail(VerticalScroll):
             sections = [("Result", task["result"])] if task["result"] is not None else \
                 [("Brief", task["body"])] if task["body"] else []
         sections += [("", "")] * (2 - len(sections))
+        complete = True
         for (label, text), suffix in zip(sections, ("", "2")):
             self.query_one(f"#d-label{suffix}").update(Text(label))
-            self.set_markdown(f"d-body{suffix}", text)
+            complete &= self.set_markdown(f"d-body{suffix}", text)
         self.query_one("#d-events-label").update(Text("Events"))
         self.query_one("#d-events").update(events_table(conn, task["id"], None if full else 12, None if full else 300))
+        self._pending = not complete  # a Markdown section is waiting for the pane to have a width
 
 
 class TextScreen(ModalScreen):
@@ -262,7 +278,8 @@ class TextScreen(ModalScreen):
 
 CHIP_STYLE = {"running": "black on cyan", "STALE": "black on yellow", "expired": "black on yellow",
               "ready": "black on white", "held": "white on magenta", "blocked": "bold white on red", "done": "black on green",
-              "cancelled": "dim"}
+              "cancelled": "dim",
+              "sandbox": "bold black on yellow", "filter": "bold black on magenta"}
 
 
 def chip(label, kind):
@@ -323,7 +340,9 @@ class BoardApp(App):
         Binding("d", "dispatch", "Dispatch"),
         Binding("p", "pause", "Pause/resume"),
         Binding("t", "toggle_all", "All/recent"),
+        Binding("slash", "filter", "Filter"),
         Binding("enter", "open", "Open"),
+        Binding("escape", "clear_filter", show=False),
         Binding("q", "quit", "Quit"),
         Binding("j", "move(1)", show=False),
         Binding("k", "move(-1)", show=False),
@@ -339,6 +358,8 @@ class BoardApp(App):
     #main.-narrow { layout: vertical; }
     #main.-narrow #tasks { width: 100%; height: 1fr; }
     #main.-narrow #side { width: 100%; height: 1fr; border-left: none; border-top: solid $primary 50%; }
+    #search { dock: bottom; display: none; margin-bottom: 1; height: 1; }
+    #search.-shown { display: block; }
     DataTable { background: transparent; }
     """
 
@@ -346,6 +367,7 @@ class BoardApp(App):
         super().__init__()
         self.conn, self.stale_min, self.every = conn, stale_min, every
         self.selected, self.show_all, self.proc = None, False, None
+        self.filter, self.states = "", None
 
     # ---- layout ----------------------------------------------------------
 
@@ -357,12 +379,15 @@ class BoardApp(App):
         with Horizontal(id="main"):
             yield DataTable(id="tasks", cursor_type="row", zebra_stripes=False)
             yield TaskDetail(id="side")
+        yield Input(id="search", placeholder="filter by title, agent, id or state; esc clears", compact=True)
         yield Footer()
 
     def on_mount(self):
+        self.load_settings()
         table = self.query_one(DataTable)
         self.refresh_board()
         self.set_interval(self.every, self.refresh_board)
+        self.theme_changed_signal.subscribe(self, lambda theme: self.save_settings())
         table.focus()
 
     def on_resize(self, event):
@@ -378,6 +403,31 @@ class BoardApp(App):
             table.add_column(label, key=key, width=width)
         table.add_column("title", key="title", width=max(15, room))
 
+    # ---- remembered choices ----------------------------------------------
+
+    @property
+    def settings_file(self):
+        return paths.agents_file().parent / "ui.json"
+
+    def load_settings(self):
+        theme = DEFAULT_THEME
+        try:
+            saved = json.loads(self.settings_file.read_text())
+            theme, self.show_all = saved.get("theme", theme), bool(saved.get("show_all", False))
+        except (OSError, ValueError):
+            pass
+        try:
+            self.theme = theme
+        except Exception:  # a theme name from a newer or older Textual
+            self.theme = DEFAULT_THEME
+
+    def save_settings(self):
+        try:
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+            self.settings_file.write_text(json.dumps({"theme": self.theme, "show_all": self.show_all}))
+        except OSError:
+            pass  # remembering the theme is a convenience, not a requirement
+
     # ---- the board -------------------------------------------------------
 
     def agents(self):
@@ -390,8 +440,17 @@ class BoardApp(App):
     def dispatching(self):
         return self.proc is not None and self.proc.poll() is None
 
+    def matches(self, task, state):
+        needle = self.filter.lower()
+        if not needle:
+            return True
+        haystack = " ".join(str(x or "") for x in (task["id"], task["title"], task["claimed_by"], task["assignee"], state))
+        return needle in haystack.lower()
+
     def refresh_board(self):
-        t, rows, summary = board_view(self.conn, self.stale_min, self.show_all)
+        t, all_rows, summary = board_view(self.conn, self.stale_min, self.show_all)
+        rows = [row for row in all_rows if self.matches(row[0], row[1])]
+        self.announce_changes(all_rows)
         table = self.query_one(DataTable)
         self.set_columns(table)
         for task, state, _ in rows:
@@ -407,17 +466,42 @@ class BoardApp(App):
         if self.selected:
             table.move_cursor(row=ids.index(self.selected), animate=False)
         title = Text(f"nextrunner  {time.strftime('%H:%M:%S', time.localtime(t))}", style="bold")
+        if paths.is_sandboxed():
+            title.append("  ")
+            title.append_text(chip("sandbox", "sandbox"))
         if self.dispatching:
             title.append("   dispatching…", style="cyan")
+        if self.filter:
+            title.append("  ")
+            title.append_text(chip(f"filter: {self.filter} ({len(rows)}/{len(all_rows)})", "filter"))
         self.query_one("#title").update(title)
-        self.query_one("#chips").update(counts_line(rows, self.show_all))
-        self.query_one("#agents").update(agents_line(agent_status(self.conn, self.agents(), rows)))
+        self.query_one("#chips").update(counts_line(all_rows, self.show_all))
+        self.query_one("#agents").update(agents_line(agent_status(self.conn, self.agents(), all_rows)))
         self.show_detail()
+
+    def announce_changes(self, rows):
+        """A toast when a task finishes, blocks or goes stale. The first look at the board says nothing."""
+        now = {task["id"]: (state, task) for task, state, _ in rows}
+        if self.states is not None:
+            for task_id, (state, task) in now.items():
+                before = self.states.get(task_id)
+                if before is None or before == state:
+                    continue
+                who = task["claimed_by"] or task["assignee"] or "anyone"
+                if state == "done":
+                    self.notify(f"{task_id} done by {who}\n{task['title']}", title="✓ done", timeout=8)
+                elif state == "blocked":
+                    self.notify(f"{task_id}\n{task['title']}", title="✗ blocked", severity="error", timeout=10)
+                elif state == "STALE":
+                    self.notify(f"{task_id} ({who}) has said nothing for {self.stale_min} min", title="◐ stale",
+                                severity="warning", timeout=10)
+        self.states = {task_id: state for task_id, (state, _) in now.items()}
 
     def show_detail(self):
         side = self.query_one("#side", TaskDetail)
         if not self.selected:
-            side.show_message("no tasks", "Press **a** to add a task.")
+            side.show_message("nothing matches the filter" if self.filter else "no tasks",
+                              "" if self.filter else "Press **a** to add a task.")
         else:
             side.show(self.conn, self.selected)
 
@@ -442,9 +526,33 @@ class BoardApp(App):
         if self.selected:
             self.push_screen(TextScreen(self.conn, self.selected))
 
+    def action_filter(self):
+        box = self.query_one("#search")
+        box.add_class("-shown")
+        box.focus()
+
+    def on_input_changed(self, event):
+        if event.input.id == "search":
+            self.filter = event.value.strip()
+            self.refresh_board()
+
+    def on_input_submitted(self, event):
+        if event.input.id == "search":
+            self.query_one(DataTable).focus()  # keep the filter, go back to the list
+
+    def action_clear_filter(self):
+        box = self.query_one("#search")
+        if box.has_class("-shown") or self.filter:
+            box.value = ""
+            box.remove_class("-shown")
+            self.filter = ""
+            self.query_one(DataTable).focus()
+            self.refresh_board()
+
     def action_toggle_all(self):
         self.show_all = not self.show_all
         self.say("showing every task" if self.show_all else "showing open tasks and the last hour")
+        self.save_settings()
         self.refresh_board()
 
     def action_add(self):
