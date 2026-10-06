@@ -7,7 +7,7 @@ file, so any agent can pick up where another stopped. A small dispatcher,
 which is plain code and uses no tokens, starts an agent for each ready task
 and moves the task to another agent when one fails or runs out of tokens.
 
-The board and dispatcher use only the standard library. Needs Python 3.10 or newer, or use the single-file app from a Release, which needs nothing.
+The board and dispatcher use only the standard library. The full-screen UI uses [Textual](https://textual.textualize.io/). Needs Python 3.10 or newer, or use the single-file app from a Release, which needs nothing.
 
 ## Install
 
@@ -39,13 +39,35 @@ nextrunner dispatch
 nextrunner list --all
 nextrunner list --since 2026-10-06 --until 2026-10-06   # what changed that day, done tasks included
 nextrunner status               # the board as text
+nextrunner ui                   # the board full screen
 ```
 
 `status` prints open tasks and tasks finished in
 the last hour, how long ago each one last had an event, how much claim time
 is left, which agents are resting, and the five latest events. A running task
 with no event for 15 minutes is marked `STALE` (change it with `--stale
-MINUTES`). It is plain text, so agents and scripts can read it.
+MINUTES`). It is plain text, so agents and scripts can read it; use `nextrunner ui` to watch the
+board live.
+
+`nextrunner ui` is the same board full screen, and you can act on it. The selected task shows
+under the list: who holds it and for how long, its brief or its result (rendered as Markdown,
+tables included), and its events with colour by kind.
+
+| Key | Does |
+|---|---|
+| ↑ ↓ (or j k) | Move between tasks |
+| Enter | Open the task full screen: the whole brief and result as Markdown and every event; Esc or ← goes back, q quits |
+| a | Add a task in a form: title, agent, strict, level (read, edit, commit), folder, brief; Ctrl+S adds, Esc cancels |
+| f | Add a follow-up to the selected task (same agent and folder, resumes its session) |
+| o | Reopen the selected task |
+| d | Start a dispatcher pass in the background (asks for `--jobs`); output goes to the dispatch log |
+| p | Pause an agent for some minutes, or resume it (a form with Pause and Resume buttons) |
+| t | Switch between open tasks plus the last hour, and every task |
+| q | Quit. A dispatcher started from the UI keeps running |
+
+The top shows a count chip for each state (● running, ◐ stale, ◌ expired, ○ ready, ✗ blocked,
+✓ done) and each agent as up with its runs against its `parallel` limit, or resting with the
+time left.
 
 ## Where the files live
 
@@ -128,8 +150,8 @@ Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
 - **Cancel.** `nextrunner cancel <id> [--reason TEXT]` takes a task off the board
   for good when it is ready (held or not), blocked, or its run died. A task
   someone is running is left alone: wait, or let its claim expire. Cancelled
-  tasks leave `list` and the open board like done ones (`--all` and `--since`
-  still show them), and `nextrunner reopen` brings one back. The
+  tasks leave `list` and the open board like done ones (`--all`, `--since`
+  and `t` in the UI still show them), and `nextrunner reopen` brings one back. The
   first time a board made before this command is opened, its tasks table is
   rebuilt to allow the new status, and a copy named `board.db.before-cancel`
   is left next to it.
@@ -271,7 +293,7 @@ rm ~/Library/LaunchAgents/local.nextrunner.dispatch.plist
 killing the process alone only makes launchd start a new one.
 
 Log: the template sends the dispatcher's output and errors to `dispatch.log`
-(`tail -f` it; `nextrunner where` shows the folder). The file grows forever;
+(`tail -f` it; `nextrunner where` shows the folder the UI uses). The file grows forever;
 empty it with `: > dispatch.log` now and then.
 
 Sleep: nothing runs while the Mac sleeps. The dispatcher and any agent it

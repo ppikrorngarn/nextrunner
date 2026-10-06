@@ -23,7 +23,7 @@ EXE = ".exe" if sys.platform == "win32" else ""
 
 def build(name):
     subprocess.run([sys.executable, "-m", "PyInstaller", "--onefile", "--name", name,
-                    "--add-data", f"{ROOT / 'src' / 'nextrunner' / 'agents.example.json'}{os.pathsep}nextrunner", "--paths", str(ROOT / "src"),
+                    "--collect-all", "textual", "--add-data", f"{ROOT / 'src' / 'nextrunner' / 'agents.example.json'}{os.pathsep}nextrunner", "--collect-all", "rich", "--paths", str(ROOT / "src"),
                     "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build"),
                     "--specpath", str(ROOT / "build"), "--noconfirm", "--log-level", "WARN",
                     str(ROOT / "packaging" / "entry.py")], check=True)

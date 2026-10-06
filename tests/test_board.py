@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nextrunner import agents, board, cli, db, dispatcher, runner, view
+from nextrunner import agents, board, cli, db, dispatcher, forms, runner, view
 
 PY = sys.executable
 OK = {"cmd": [PY, "-c", "print('reply from a working agent')"]}
@@ -805,6 +805,7 @@ class FanOutTest(Base):
         self.assertIn("need --cwd", self.refused("add", "x", "--commit"))
         first = board.add(self.conn, "first", to="alpha", cwd=self.tmp.name)
         self.cli("add", "x", "--edit", "--follow", first)  # a follow-up inherits the folder
+        self.assertIn("needs a folder", forms.add_from_answers(self.conn, {"title": "x", "level": "e"})[1])
 
     def test_fill_replaces_placeholders_and_refuses_leftovers(self):
         brief = Path(self.tmp.name) / "brief.md"
@@ -958,6 +959,12 @@ class HoldTest(Base):
         self.assertIn("held", {c["name"] for c in conn.execute("PRAGMA table_info(tasks)")})
         t = board.add(conn, "on an old board")
         self.assertEqual(view.shown_status(db.get(conn, t)), "ready")
+
+    def test_add_form_can_hold(self):
+        t, _ = forms.add_from_answers(self.conn, {"title": "draft", "hold": "y"})
+        self.assertEqual(db.get(self.conn, t)["held"], 1)
+        t, _ = forms.add_from_answers(self.conn, {"title": "draft"})
+        self.assertEqual(db.get(self.conn, t)["held"], 0)
 
 
 class TimeoutTest(Base):
@@ -1280,3 +1287,34 @@ class SessionTest(Base):
             cli.main(["add", "follow-up", "--follow", first, "--strict"])
         task = db.get(self.conn, out.getvalue().strip())
         self.assertEqual((task["assignee"], task["strict"], task["follows"]), ("alpha", 1, first))
+
+
+class UiHelpersTest(Base):
+    def test_add_form_levels_and_checks(self):
+        t, msg = forms.add_from_answers(self.conn, {"title": "read it", "to": "alpha", "level": "r"})
+        self.assertEqual((msg, db.get(self.conn, t)["edit"]), (f"added {t}", 0))
+        t, _ = forms.add_from_answers(self.conn, {"title": "commit it", "level": "c", "cwd": self.tmp.name})
+        task = db.get(self.conn, t)
+        self.assertEqual((task["edit"], task["commit_changes"], task["cwd"]), (1, 1, self.tmp.name))
+        self.assertEqual(forms.add_from_answers(self.conn, {"title": ""}), (None, "cancelled: no title"))
+        self.assertIn("level must be", forms.add_from_answers(self.conn, {"title": "x", "level": "z"})[1])
+        self.assertIn("strict needs", forms.add_from_answers(self.conn, {"title": "x", "strict": "y"})[1])
+        self.assertIn("no folder", forms.add_from_answers(self.conn, {"title": "x", "cwd": "/no/such/dir"})[1])
+
+    def test_follow_up_form_keeps_agent(self):
+        first = board.add(self.conn, "first", to="alpha")
+        t, _ = forms.add_from_answers(self.conn, {"title": "next", "strict": "y"}, follows=first)
+        task = db.get(self.conn, t)
+        self.assertEqual((task["assignee"], task["strict"], task["follows"]), ("alpha", 1, first))
+
+    def test_agent_line_counts_running_tasks(self):
+        t = board.add(self.conn, "busy", to="alpha")
+        board.claim(self.conn, t, "alpha", ttl=600)
+        agents.set_down(self.conn, "beta", 30)
+        _, rows, _ = view.board_view(self.conn)
+        line = view.agent_states(self.conn, {"alpha": {"parallel": 2}, "beta": {}}, rows)
+        self.assertEqual(line, "agents: alpha up 1/2   beta resting 0/1")
+
+    def test_ui_refuses_without_a_terminal(self):
+        with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), self.assertRaises(SystemExit):
+            cli.main(["ui"])

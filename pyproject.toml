@@ -12,6 +12,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Piyawasin Pikror-ngarn" }]
 keywords = ["ai-agents", "task-board", "dispatcher"]
+dependencies = [
+    "textual>=8,<9",
+]
 
 [project.scripts]
 nextrunner = "nextrunner.cli:main"

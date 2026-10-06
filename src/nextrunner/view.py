@@ -1,4 +1,4 @@
-"""Plain-text views of the board, shared by list, show and status."""
+"""Plain-text views of the board, shared by list, show, status and the full-screen UI."""
 import time
 from collections import Counter
 
@@ -86,7 +86,7 @@ FINISHED = "('done', 'cancelled')"  # statuses that leave the open list
 
 
 def board_view(conn, stale_min=15, show_all=False):
-    """(now, [(task, state, row text without the title)], summary) for status.
+    """(now, [(task, state, row text without the title)], summary) for status and ui.
 
     Shows open tasks and tasks finished in the last hour, or every task with show_all.
     """
@@ -143,6 +143,17 @@ def render_status(conn, stale_min=15, width=100, color=False):
     if any(state == "held" for _, state, _ in rows):
         lines += ["", "held = waiting for approval. Let it run with: nextrunner ok <id>"]
     return "\n".join(lines)
+
+
+def agent_status(conn, agents, rows):
+    """[{name, up, running, parallel, left, reason}] for each agent: runs going, and how long a resting one has left."""
+    t = now()
+    running = Counter(task["claimed_by"] for task, state, _ in rows if state in ("running", "STALE"))
+    resting = {r["name"]: r for r in conn.execute("SELECT * FROM agents WHERE down_until > ?", (t,))}
+    return [{"name": name, "up": name not in resting, "running": running[name], "parallel": spec.get("parallel", 1),
+             "left": ago(resting[name]["down_until"] - t) if name in resting else "",
+             "reason": resting[name]["reason"] if name in resting else ""}
+            for name, spec in agents.items()]
 
 
 def agent_states(conn, agents, rows):

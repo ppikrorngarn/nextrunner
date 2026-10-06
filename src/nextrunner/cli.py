@@ -135,6 +135,8 @@ def main(argv=None):
     sp.add_argument("--force", action="store_true", help="replace an existing agents.json")
     cmd("doctor", "check agents.json: programs exist, placeholders and reply modes are valid")
     cmd("where", "show which files nextrunner is using, and why")
+    sp = cmd("ui", "full-screen board you can act on: add, follow up, reopen, dispatch, pause")
+    sp.add_argument("--stale", type=float, default=15, metavar="MINUTES")
 
     a = p.parse_args(argv)
     if a.cmd == "dispatch" and a.jobs < 1:
@@ -282,6 +284,10 @@ def main(argv=None):
     elif a.cmd == "status":
         color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
         print(render_status(conn, a.stale, shutil.get_terminal_size((120, 24)).columns, color))
+    elif a.cmd == "ui":
+        need(sys.stdout.isatty(), "ui needs a terminal; use status to print the board")
+        from .tui import run_ui  # Textual is only needed here, so the other commands start without importing it
+        run_ui(conn, a.stale)
     elif a.cmd == "dispatch":
         while True:
             dispatch(conn, timeout=a.timeout, dry_run=a.dry_run, jobs=a.jobs)
