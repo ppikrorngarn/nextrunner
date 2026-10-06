@@ -1,4 +1,5 @@
 """The full-screen board, driven with Textual's test pilot (no terminal needed)."""
+import io
 import json
 import os
 import tempfile
@@ -6,9 +7,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from rich.console import Console
 from textual.widgets import DataTable
 
 from nextrunner import agents, board, db, tui
+
+
+def table_text(widget):
+    """What a Static holding a Rich table shows, as plain text."""
+    console = Console(width=200, file=io.StringIO(), record=True)
+    console.print(widget.content)
+    return console.export_text()
 
 
 def text_of(widget):
@@ -42,6 +51,26 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("first [odd] title", text_of(app.query_one("#d-head")))
             self.assertEqual(app.query_one("#d-body").source, "the brief")
 
+    async def test_moving_changes_the_detail_pane(self):
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(app.selected, self.second)
+            self.assertIn("second", text_of(app.query_one("#d-head")))
+
+    async def test_j_and_k_move_like_the_arrows(self):
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("j")
+            await pilot.pause()
+            self.assertEqual(app.selected, self.second)
+            await pilot.press("k")
+            await pilot.pause()
+            self.assertEqual(app.selected, self.first)
+
     async def test_enter_opens_the_task(self):
         app = self.app()
         async with app.run_test(size=(120, 40)) as pilot:
@@ -57,6 +86,43 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter", "left")  # the left arrow goes back too
             await pilot.pause()
             self.assertNotIsInstance(app.screen, tui.TextScreen)
+
+    async def test_the_task_view_shows_brief_result_and_every_event_in_colour(self):
+        token = board.claim(self.conn, self.first, "alpha")
+        for i in range(20):
+            board.note(self.conn, self.first, "alpha", f"checkpoint {i}: " + "word " * 80)
+        board.done(self.conn, self.first, "alpha", "## Done\n\n| a | b |\n|---|---|\n| 1 | 2 |", token)
+        app = self.app()
+        app.selected = self.first
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            side = app.query_one("#side")
+            self.assertEqual(side.query_one("#d-body").source[:7], "## Done")  # beside the list: the result only
+            self.assertFalse(side.query_one("#d-body2").display)
+            self.assertIn("earlier", table_text(side.query_one("#d-events")))  # and only the latest events
+            await pilot.press("enter")
+            await pilot.pause()
+            full = app.screen
+            self.assertEqual(full.query_one("#d-body").source, "the brief")
+            self.assertEqual(text_of(full.query_one("#d-label")), "Brief")
+            self.assertTrue(full.query_one("#d-body2").source.startswith("## Done"))
+            self.assertEqual(text_of(full.query_one("#d-label2")), "Result")
+            events = table_text(full.query_one("#d-events"))
+            self.assertIn("checkpoint 0:", events)  # all of them
+            self.assertNotIn("earlier", events)
+            self.assertEqual(events.count("word"), 20 * 80)  # not cut
+
+    async def test_the_task_view_keeps_up_with_a_running_task(self):
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertNotIn("a late note", table_text(app.screen.query_one("#d-events")))
+            board.note(self.conn, self.first, "alpha", "a late note")
+            app.screen.refresh_task()
+            await pilot.pause()
+            self.assertIn("a late note", table_text(app.screen.query_one("#d-events")))
 
     async def test_q_quits_even_from_inside_a_task(self):
         app = self.app()
@@ -184,6 +250,24 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertTrue(app.query_one("#d-body").source.startswith("## Done"))
             self.assertIn("Result", text_of(app.query_one("#d-label")))
+
+    async def test_layout_follows_the_width(self):
+        app = self.app()
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            self.assertFalse(app.query_one("#main").has_class("-narrow"))
+            await pilot.resize_terminal(90, 40)
+            await pilot.pause()
+            self.assertTrue(app.query_one("#main").has_class("-narrow"))
+
+    async def test_the_table_never_scrolls_sideways(self):
+        board.add(self.conn, "a very long title " * 12, to="alpha")
+        for width in (140, 90, 70):
+            app = self.app()
+            async with app.run_test(size=(width, 40)) as pilot:
+                await pilot.pause()
+                await pilot.pause()
+                self.assertEqual(app.query_one(DataTable).max_scroll_x, 0, width)
 
     async def test_no_agents_file_says_how_to_fix_it(self):
         (Path(self.tmp.name) / "agents.json").unlink()

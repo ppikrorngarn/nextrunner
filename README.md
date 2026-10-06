@@ -49,14 +49,15 @@ with no event for 15 minutes is marked `STALE` (change it with `--stale
 MINUTES`). It is plain text, so agents and scripts can read it; use `nextrunner ui` to watch the
 board live.
 
-`nextrunner ui` is the same board full screen, and you can act on it. The selected task shows
-under the list: who holds it and for how long, its brief or its result (rendered as Markdown,
-tables included), and its events with colour by kind.
+`nextrunner ui` is the same board full screen, and you can act on it. The task list is on the
+left and the selected task on the right: who holds it and for how long, its brief or its
+result (rendered as Markdown, tables included), and its events with colour by kind. In a
+terminal narrower than 110 columns the detail pane moves under the list.
 
 | Key | Does |
 |---|---|
 | ↑ ↓ (or j k) | Move between tasks |
-| Enter | Open the task full screen: the whole brief and result as Markdown and every event; Esc or ← goes back, q quits |
+| Enter | Open the task full screen, in the same colours: the whole brief and result as Markdown and every event, kept up to date while it runs; Esc or ← goes back, q quits |
 | a | Add a task in a form: title, agent, strict, level (read, edit, commit), folder, brief; Ctrl+S adds, Esc cancels |
 | f | Add a follow-up to the selected task (same agent and folder, resumes its session) |
 | o | Reopen the selected task |

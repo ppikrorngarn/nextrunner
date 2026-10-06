@@ -33,6 +33,7 @@ KIND_STYLE = {"created": "dim", "claimed": "cyan", "note": "yellow", "done": "gr
               "beat": "dim", "session": "dim", "approved": "green", "fan-out": "dim", "cancelled": "dim", "hook": "red",
               "run": "dim"}
 LEVELS = [("read only", "r"), ("edit files in the folder", "e"), ("edit, and the dispatcher commits", "c")]
+NARROW = 110  # below this many columns the detail pane moves under the task list
 
 
 class AddScreen(ModalScreen):
@@ -252,6 +253,10 @@ class TextScreen(ModalScreen):
 
     def on_mount(self):
         self.query_one("#text").border_title = f"{self.task_id}   esc back · q quit"
+        self.refresh_task()
+        self.set_interval(2, self.refresh_task)  # a running task keeps changing
+
+    def refresh_task(self):
         self.query_one(TaskDetail).show(self.conn, self.task_id, full=True)
 
 
@@ -329,8 +334,11 @@ class BoardApp(App):
     #chips { height: 1; }
     #agents { height: 1; }
     #main { height: 1fr; }
-    #tasks { height: 1fr; }
-    #side { height: 1fr; border-top: solid $primary 50%; padding: 0 2; }
+    #tasks { width: 3fr; height: 1fr; }
+    #side { width: 2fr; height: 1fr; border-left: solid $primary 50%; padding: 0 2; }
+    #main.-narrow { layout: vertical; }
+    #main.-narrow #tasks { width: 100%; height: 1fr; }
+    #main.-narrow #side { width: 100%; height: 1fr; border-left: none; border-top: solid $primary 50%; }
     DataTable { background: transparent; }
     """
 
@@ -346,18 +354,29 @@ class BoardApp(App):
             yield Static(id="title")
             yield Static(id="chips")
             yield Static(id="agents")
-        with Vertical(id="main"):
+        with Horizontal(id="main"):
             yield DataTable(id="tasks", cursor_type="row", zebra_stripes=False)
             yield TaskDetail(id="side")
         yield Footer()
 
     def on_mount(self):
         table = self.query_one(DataTable)
-        for label, key in (("", "icon"), ("id", "id"), ("agent", "agent"), ("last", "last"), ("title", "title")):
-            table.add_column(label, key=key)
         self.refresh_board()
         self.set_interval(self.every, self.refresh_board)
         table.focus()
+
+    def on_resize(self, event):
+        self.query_one("#main").set_class(event.size.width < NARROW, "-narrow")
+        self.call_after_refresh(self.refresh_board)
+
+    def set_columns(self, table):
+        """The title gets whatever width the other columns leave, so the table never scrolls sideways."""
+        fixed = (("", "icon", 2), ("id", "id", 12), ("agent", "agent", 10), ("last", "last", 9))
+        room = table.size.width - sum(w for _, _, w in fixed) - 2 * (len(fixed) + 1) - 2  # cell padding, scrollbar
+        table.clear(columns=True)
+        for label, key, width in fixed:
+            table.add_column(label, key=key, width=width)
+        table.add_column("title", key="title", width=max(15, room))
 
     # ---- the board -------------------------------------------------------
 
@@ -374,7 +393,7 @@ class BoardApp(App):
     def refresh_board(self):
         t, rows, summary = board_view(self.conn, self.stale_min, self.show_all)
         table = self.query_one(DataTable)
-        table.clear()
+        self.set_columns(table)
         for task, state, _ in rows:
             who, level, last, left = row_cells(task, state, t)
             table.add_row(Text(ICONS[state], style=STATE_STYLE.get(state, "")), Text(task["id"], style="dim"),
