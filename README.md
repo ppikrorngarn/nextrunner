@@ -412,8 +412,8 @@ uv run --with pyinstaller python packaging/build.py --name nextrunner-macos-arm6
 ```
 
 That makes `dist/nextrunner-macos-arm64` (about 16 MB, no Python needed to run it) and a `.sha256`,
-then runs it the way a user would: version, add, dispatch with the fake dev agent.
-PyInstaller cannot cross-compile, so one build per OS and CPU.
+then runs it the way a user would: version, add, dispatch with the fake dev agent, and the UI
+through a pseudo-terminal. PyInstaller cannot cross-compile, so one build per OS and CPU.
 `.github/workflows/release.yml` builds macOS arm64 and x64, Linux x64 and arm64, and Windows
 (experimental, untested) on a `v*` tag and attaches them to a GitHub Release.
 

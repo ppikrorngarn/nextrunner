@@ -6,15 +6,18 @@
 PyInstaller cannot cross-compile: the app is built for the OS and CPU this runs on.
 CI runs it once per target (see .github/workflows/release.yml). The result is
 dist/<name> and dist/<name>.sha256. The smoke test then runs the built file the way a
-user would: version, add, dispatch (with the fake dev agent).
+user would: version, add, dispatch (with the fake dev agent), and the full-screen UI
+(through a pseudo-terminal, skipped on Windows).
 """
 import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +56,32 @@ def smoke(exe):
         shown = run(exe, "show", task, env=env)
         assert "agent-a handled: smoke test" in shown, shown
         print("dispatch: ok")
+        if sys.platform != "win32":
+            smoke_ui(exe, env)
+
+
+def smoke_ui(exe, env):
+    import pty
+    import select
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execve(str(exe), [str(exe), "ui"], {**env, "TERM": "xterm-256color"})
+    seen, end = b"", time.time() + 20
+    plain = lambda raw: re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07", b"", raw)  # screen codes split words
+    while time.time() < end and b"smoke test" not in plain(seen):
+        if select.select([fd], [], [], 0.2)[0]:
+            try:
+                seen += os.read(fd, 65536)
+            except OSError:
+                break
+    os.write(fd, b"q")
+    time.sleep(1)
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+    assert b"smoke test" in plain(seen), "the UI did not show the task"
+    print("ui: ok")
 
 
 if __name__ == "__main__":
