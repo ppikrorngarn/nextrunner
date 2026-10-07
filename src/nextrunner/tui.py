@@ -9,6 +9,7 @@ import subprocess
 import time
 from collections import Counter
 
+from markdown_it import MarkdownIt
 from rich.table import Table
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -161,6 +162,20 @@ class PauseScreen(ModalScreen):
             self.dismiss((name, float(raw) if raw.replace(".", "", 1).isdigit() else 60.0))
 
 
+def keep_line_breaks():
+    """A Markdown parser that keeps a single newline as a line break: agents write briefs and results line by line,
+    and plain Markdown would join those lines with a space."""
+    def hard_breaks(state):
+        for token in state.tokens:
+            for child in token.children or ():
+                if child.type == "softbreak":
+                    child.type = "hardbreak"
+
+    parser = MarkdownIt("gfm-like")
+    parser.core.ruler.push("keep_line_breaks", hard_breaks)
+    return parser
+
+
 class TaskDetail(VerticalScroll):
     """One task in colour: title, who holds it, brief and result as Markdown, and its events.
 
@@ -180,9 +195,9 @@ class TaskDetail(VerticalScroll):
         yield Static(id="d-head")
         yield Static(id="d-meta")
         yield Static(id="d-label", classes="label")
-        yield Markdown(id="d-body")
+        yield Markdown(id="d-body", parser_factory=keep_line_breaks)
         yield Static(id="d-label2", classes="label")
-        yield Markdown(id="d-body2")
+        yield Markdown(id="d-body2", parser_factory=keep_line_breaks)
         yield Static(id="d-events-label", classes="label")
         yield Static(id="d-events")
 

@@ -21,6 +21,11 @@ def table_text(widget):
     return console.export_text()
 
 
+def markdown_text(widget):
+    """What a Markdown widget shows, block by block, as plain text."""
+    return "\n".join(str(block.content) for block in widget.children)
+
+
 def text_of(widget):
     return str(getattr(widget, "content", None) or widget.render())
 
@@ -51,6 +56,27 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("● alpha 0/2", text_of(app.query_one("#agents")))
             self.assertIn("first [odd] title", text_of(app.query_one("#d-head")))
             self.assertEqual(app.query_one("#d-body").source, "the brief")
+
+    async def test_a_single_newline_in_the_brief_stays_a_line_break(self):
+        task = board.add(self.conn, "lines", "step one\nstep two", to="alpha")
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.query_one(tui.TaskDetail).show(self.conn, task)
+            await pilot.pause()
+            self.assertIn("step one\nstep two", markdown_text(app.query_one("#d-body")))
+
+    async def test_the_full_screen_keeps_line_breaks_in_the_brief_and_the_result(self):
+        task = board.add(self.conn, "lines", "step one\nstep two", to="alpha")
+        self.conn.execute("UPDATE tasks SET result = ? WHERE id = ?", ("done one\ndone two", task))
+        self.conn.commit()
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.push_screen(tui.TextScreen(self.conn, task))
+            await pilot.pause()
+            self.assertIn("step one\nstep two", markdown_text(app.screen.query_one("#d-body")))
+            self.assertIn("done one\ndone two", markdown_text(app.screen.query_one("#d-body2")))
 
     async def test_moving_changes_the_detail_pane(self):
         app = self.app()
@@ -394,3 +420,20 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineBreakTest(unittest.TestCase):
+    def tokens(self, source):
+        return [child.type for token in tui.keep_line_breaks().parse(source) for child in token.children or ()]
+
+    def test_a_single_newline_becomes_a_hard_break(self):
+        self.assertEqual(self.tokens("one\ntwo"), ["text", "hardbreak", "text"])
+        self.assertNotIn("softbreak", self.tokens("one\ntwo\nthree"))
+
+    def test_a_blank_line_still_starts_a_new_paragraph(self):
+        kinds = [token.type for token in tui.keep_line_breaks().parse("one\n\ntwo")]
+        self.assertEqual(kinds.count("paragraph_open"), 2)
+
+    def test_code_blocks_are_left_alone(self):
+        fence = [token for token in tui.keep_line_breaks().parse("```\na\nb\n```") if token.type == "fence"]
+        self.assertEqual(fence[0].content, "a\nb\n")
