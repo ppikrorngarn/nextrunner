@@ -11,9 +11,12 @@ The board and dispatcher use only the standard library. The full-screen UI uses 
 
 ## Install
 
-Clone it, then `uv tool install -e .` gives you an
-`nextrunner` command that follows your checkout. Then `nextrunner init`
-writes a starter `agents.json` where nextrunner looks for it.
+With [uv](https://docs.astral.sh/uv/) (recommended) or pipx, straight from the repository:
+
+```bash
+uv tool install git+https://github.com/ppikrorngarn/nextrunner       # or: pipx install git+https://github.com/ppikrorngarn/nextrunner
+nextrunner --version
+```
 
 Without Python: download the file for your machine from the latest
 [Release](../../releases) (`nextrunner-macos-arm64`, `nextrunner-macos-x64`,
@@ -24,6 +27,9 @@ because the file is not signed; allow it once with:
 ```bash
 xattr -d com.apple.quarantine ./nextrunner-macos-arm64
 ```
+
+To work on nextrunner itself: clone it, then `uv tool install -e .` gives you an
+`nextrunner` command that follows your checkout.
 
 ## Quick start
 
@@ -449,3 +455,7 @@ PYTHONPATH=src python3 -m unittest -v   # or: uv run python -m unittest -v
 that may use the board: what to do when the dispatcher started it, how to
 take and finish a task by hand, how to hand work on, and the rules. Adapt the
 names and give it to each agent as a skill or a system prompt section.
+
+## License
+
+MIT; see `LICENSE`.
