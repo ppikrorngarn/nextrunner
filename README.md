@@ -442,3 +442,10 @@ PYTHONPATH=src python3 -m unittest -v   # or: uv run python -m unittest -v
 
 `.github/workflows/test.yml` runs them on Linux and macOS, on Python 3.10 and
 3.13, for every push and pull request.
+
+## Giving the board to your agents
+
+`examples/agent-instructions.md` is a generic instruction sheet for an agent
+that may use the board: what to do when the dispatcher started it, how to
+take and finish a task by hand, how to hand work on, and the rules. Adapt the
+names and give it to each agent as a skill or a system prompt section.
