@@ -6,6 +6,15 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+env:
+  # The uv cache and the checkout sit on different drives on Windows runners, so uv cannot hardlink
+  # and says so on every run; copying is what it does anyway.
+  UV_LINK_MODE: copy
+  # Name git's first branch, so the `git init` inside actions/checkout prints no hint about it.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
 jobs:
   build:
     strategy:
