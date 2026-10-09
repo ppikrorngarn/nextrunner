@@ -1,2 +1,2 @@
 """nextrunner: a shared task board for a team of AI agents."""
-__version__ = "0.1.1"
+__version__ = "0.1.2"
