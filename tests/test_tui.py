@@ -30,6 +30,14 @@ def text_of(widget):
     return str(getattr(widget, "content", None) or widget.render())
 
 
+async def until(pilot, check, tries=60):
+    """Pause until check() holds. A slow machine can need more than one pause for queued events."""
+    for _ in range(tries):
+        if check():
+            return
+        await pilot.pause(0.05)
+
+
 class UiTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -62,8 +70,11 @@ class UiTest(unittest.IsolatedAsyncioTestCase):
         app = self.app()
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            app.query_one(tui.TaskDetail).show(self.conn, task)
-            await pilot.pause()
+            for _ in range(5):  # select it as a person would, so no queued row event can show another task
+                if app.selected == task:
+                    break
+                await pilot.press("down")
+            await until(pilot, lambda: "step one\nstep two" in markdown_text(app.query_one("#d-body")))
             self.assertIn("step one\nstep two", markdown_text(app.query_one("#d-body")))
 
     async def test_the_full_screen_keeps_line_breaks_in_the_brief_and_the_result(self):
