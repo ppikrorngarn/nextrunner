@@ -15,6 +15,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DataTable, Footer, Input, Label, Markdown, Select, Static
 
@@ -519,7 +520,10 @@ class BoardApp(App):
         self.states = {task_id: state for task_id, (state, _) in now.items()}
 
     def show_detail(self):
-        side = self.query_one("#side", TaskDetail)
+        try:
+            side = self.query_one("#side", TaskDetail)
+        except NoMatches:
+            return  # a row event that arrives while the app starts or closes, with no pane to show it in
         if not self.selected:
             side.show_message("nothing matches the filter" if self.filter else "no tasks",
                               "" if self.filter else "Press **a** to add a task.")
