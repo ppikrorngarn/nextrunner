@@ -22,9 +22,10 @@ nextrunner --version
 
 Without Python: download the file for your machine from the latest
 [Release](../../releases) (`nextrunner-macos-arm64`, `nextrunner-macos-x64`,
-`nextrunner-linux-x64`, `nextrunner-linux-arm64`; Windows is untested), make it
-executable, and put it on your PATH. On macOS the first run is blocked
-because the file is not signed; allow it once with:
+`nextrunner-linux-x64`, `nextrunner-linux-arm64`, `nextrunner-windows-x64.exe`),
+make it executable, and put it on your PATH. The files are not signed: on
+Windows, SmartScreen asks once (More info, then Run anyway); on macOS the
+first run is blocked, so allow it once with:
 
 ```bash
 xattr -d com.apple.quarantine ./nextrunner-macos-arm64
@@ -432,7 +433,8 @@ That makes `dist/nextrunner-macos-arm64` (about 16 MB, no Python needed to run i
 then runs it the way a user would: version, add, dispatch with the fake dev agent, and the UI
 through a pseudo-terminal. PyInstaller cannot cross-compile, so one build per OS and CPU.
 `.github/workflows/release.yml` builds macOS arm64 and x64, Linux x64 and arm64, and Windows
-(experimental, untested) on a `v*` tag and attaches them to a GitHub Release.
+(experimental: a failed Windows build does not stop the release, and its smoke test skips
+the UI) on a `v*` tag and attaches them to a GitHub Release.
 
 ## Safety
 
