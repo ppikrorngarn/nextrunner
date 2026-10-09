@@ -35,6 +35,14 @@ class InitTest(unittest.TestCase):
         self.assertEqual(agents["other"]["cmd"], [PY, "-c", "{prompt}"])  # already has {prompt}, so none added
         self.assertEqual(list(agents), ["bot", "other"])
 
+    def test_windows_paths_keep_their_backslashes(self):
+        command = r'"C:\Program Files\Bot\bot.exe" --dir C:\work\repo'
+        with mock.patch.object(setup.os, "name", "nt"):
+            words = setup.split_command(command)
+        self.assertEqual(words, [r"C:\Program Files\Bot\bot.exe", "--dir", r"C:\work\repo"])
+        with mock.patch.object(setup.os, "name", "posix"):
+            self.assertEqual(setup.split_command(r"bot --say a\ b"), ["bot", "--say", "a b"])  # a backslash escapes there
+
     def test_never_overwrites_unless_forced(self):
         self.path.write_text("{}")
         with self.assertRaises(SystemExit):

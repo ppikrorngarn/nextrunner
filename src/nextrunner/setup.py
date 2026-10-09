@@ -1,5 +1,6 @@
 """First-run help: `nextrunner init` writes a starter agents.json, `nextrunner doctor` checks the one you have."""
 import json
+import os
 import re
 import shlex
 import shutil
@@ -18,10 +19,19 @@ def example_text():
     return resources.files("nextrunner").joinpath("agents.example.json").read_text()
 
 
+def split_command(command):
+    """Split a command line into words, honouring quotes. On Windows a backslash is part of a path, not an escape."""
+    lex = shlex.shlex(command, posix=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    if os.name == "nt":
+        lex.escape = ""
+    return list(lex)
+
+
 def parse_agent(text):
     """'NAME=command words' -> (name, spec). {prompt} is added as the last word if the command has none."""
     name, sep, command = text.partition("=")
-    name, words = name.strip(), shlex.split(command)
+    name, words = name.strip(), split_command(command)
     if not sep or not name or not words:
         raise SystemExit(f"--agent wants NAME='command and arguments', not {text!r}")
     if not any("{prompt}" in word for word in words):
