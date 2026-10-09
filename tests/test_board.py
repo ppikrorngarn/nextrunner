@@ -430,7 +430,8 @@ class EditLevelTest(Base):
         self.dispatch({"alpha": show})
         self.assertIn("This task is read-only.", db.get(self.conn, read)["result"])
         self.assertIn(f"You may change files inside {folder}.", db.get(self.conn, edit)["result"])
-        self.assertTrue(db.get(self.conn, edit)["result"].endswith(f"board={folder.resolve()}"))
+        board_arg = db.get(self.conn, edit)["result"].rsplit("board=", 1)[1]
+        self.assertEqual(Path(board_arg).resolve(), folder.resolve())  # Windows may name it by its 8.3 short path
 
     def test_board_made_before_edit_levels_still_opens(self):
         old_path = str(Path(self.tmp.name) / "old.db")
@@ -570,7 +571,7 @@ class TraceTest(Base):
         t = board.add(self.conn, "traced", to="alpha")
         self.dispatch({"alpha": noisy})
         (line,) = self.run_event(t)
-        self.assertRegex(line, r"^\d+s exit=0 log=.*/runs/" + t + r"/1-alpha\.log$")
+        self.assertRegex(line, r"^\d+s exit=0 log=.*[/\\]runs[/\\]" + t + r"[/\\]1-alpha\.log$")
         trace = Path(line.split("log=", 1)[1])
         text = trace.read_text()
         self.assertIn("command: " + PY, text)
@@ -584,8 +585,8 @@ class TraceTest(Base):
         self.dispatch({"alpha": BROKEN, "beta": OK})
         lines = self.run_event(t)
         self.assertEqual(len(lines), 2)
-        self.assertIn("exit=1", lines[0]); self.assertIn("/1-alpha.log", lines[0])
-        self.assertIn("exit=0", lines[1]); self.assertIn("/2-beta.log", lines[1])
+        self.assertIn("exit=1", lines[0]); self.assertIn(os.sep + "1-alpha.log", lines[0])
+        self.assertIn("exit=0", lines[1]); self.assertIn(os.sep + "2-beta.log", lines[1])
         self.assertIn("outcome: failed", (self.runs_dir() / t / "1-alpha.log").read_text())
 
     def test_timeout_is_traced_too(self):
