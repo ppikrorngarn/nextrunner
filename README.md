@@ -9,6 +9,8 @@ and moves the task to another agent when one fails or runs out of tokens.
 
 The board and dispatcher use only the standard library. The full-screen UI uses [Textual](https://textual.textualize.io/). Needs Python 3.10 or newer, or use the single-file app from a Release, which needs nothing.
 
+![nextrunner ui: approve a held task, start a dispatcher pass, read a result as Markdown, compare a fan-out, add a task](docs/ui.gif)
+
 ## Install
 
 With [uv](https://docs.astral.sh/uv/) (recommended) or pipx, straight from the repository:
@@ -47,6 +49,15 @@ nextrunner list --since 2026-10-06 --until 2026-10-06   # what changed that day,
 nextrunner status               # the board as text
 nextrunner ui                   # the board full screen
 ```
+
+Two tasks and one dispatcher pass. agent-a is out of tokens, so the dispatcher
+rests it and hands the task to agent-b:
+
+![Two tasks are added and dispatched; agent-a hits its usage limit, rests, and agent-b takes the task; show prints the result and every event](docs/cli.gif)
+
+A second opinion: the same brief to two agents, then their answers one under another:
+
+![A task added with --to agent-a --to agent-b becomes two tasks; after dispatch, compare prints both answers](docs/fanout.gif)
 
 `status` prints open tasks and tasks finished in
 the last hour, how long ago each one last had an event, how much claim time
