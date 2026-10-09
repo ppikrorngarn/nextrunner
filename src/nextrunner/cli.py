@@ -195,6 +195,14 @@ def main(argv=None):
         print("\n".join(lines))
         sys.exit(1 if errors else 0)
     conn = connect()
+    try:
+        run(a, conn)
+    finally:
+        conn.close()  # now, not whenever the garbage collector gets to it: Windows cannot delete an open board
+
+
+def run(a, conn):
+    """Run a command that works on the board."""
 
     def need(ok, message):
         if not ok:
