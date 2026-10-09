@@ -25,7 +25,10 @@ EXE = ".exe" if sys.platform == "win32" else ""
 
 
 def build(name):
-    subprocess.run([sys.executable, "-m", "PyInstaller", "--onefile", "--name", name,
+    # platformdirs loads its Windows module only on Windows. Leaving it out elsewhere also stops PyInstaller
+    # warning that the Windows libraries it calls (shell32, ole32) are missing.
+    skip = [] if sys.platform == "win32" else ["--exclude-module", "platformdirs.windows"]
+    subprocess.run([sys.executable, "-m", "PyInstaller", "--onefile", "--name", name, *skip,
                     "--collect-all", "textual", "--add-data", f"{ROOT / 'src' / 'nextrunner' / 'agents.example.json'}{os.pathsep}nextrunner", "--collect-all", "rich", "--paths", str(ROOT / "src"),
                     "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build"),
                     "--specpath", str(ROOT / "build"), "--noconfirm", "--log-level", "WARN",
