@@ -9,7 +9,7 @@ from importlib import resources
 from pathlib import Path
 
 from . import paths
-from .agents import HOOK_FIELDS, HOOKS, LISTS, expand, hooks_of
+from .agents import HOOK_FIELDS, HOOKS, LISTS, ROOTS, expand, hooks_of, roots_of
 
 KNOWN_FIELDS = {"prompt", "cwd", "out", "board", "session"}
 COMMAND_KEYS = ("cmd", "cmd_edit", "cmd_resume", "cmd_edit_resume")
@@ -68,13 +68,19 @@ def check_agents(agents):
     def add(level, text):
         results.append((level, text))
 
-    if not isinstance(agents, dict) or not [n for n in agents if n != LISTS]:
+    if not isinstance(agents, dict) or not [n for n in agents if not n.startswith("$")]:
         return [("error", "agents.json must be an object with at least one agent")]
     try:
         hooks = hooks_of(agents)
+        roots = roots_of(agents)
         agents = expand(agents)
     except ValueError as err:
         return [("error", str(err))]
+    for root in roots:
+        if not Path(root).expanduser().is_dir():
+            add("warn", f"{ROOTS}: {root} is not a folder on this machine")
+    if roots:
+        add("ok", f"edit tasks may point inside: {', '.join(roots)}")
     hook_problems = 0
     for kind, command in hooks.items():
         if not shutil.which(command[0]) and not (Path(command[0]).is_file() and Path(command[0]).stat().st_mode & 0o111):

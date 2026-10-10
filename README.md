@@ -407,6 +407,19 @@ Optional keys:
   and `cmd_edit`, and check that the program keeps those limits when it
   resumes; some restore the old session's settings unless told otherwise.
 
+A top-level `"$roots"` lists the folders an edit task may point at:
+
+```json
+{
+  "$roots": ["~/code", "~/notes"],
+  "NAME": { "cmd": ["..."] }
+}
+```
+
+With it set, `nextrunner add --edit` or `--commit` with a `--cwd` outside
+every root is refused, and an edit task that reaches the board anyway is
+blocked by the dispatcher instead of run. Without it, any folder goes.
+
 ## Sessions and follow-ups
 
 For an agent with a `session` pattern, the dispatcher saves the session ID
@@ -459,6 +472,9 @@ the UI) on a `v*` tag and attaches them to a GitHub Release.
   its own work. It is not a security boundary: every agent runs as you, and
   a program that unsets the variable gets the plain board back. Keep `cmd`
   as narrow as the agent's own flags allow.
+- `"$roots"` in `agents.json` names the folders an edit task may point at.
+  Set it to your code folders, so a task against your home folder is refused
+  whoever adds it.
 - The board file is for one machine. Do not put it on a network drive or in
   a synced folder.
 

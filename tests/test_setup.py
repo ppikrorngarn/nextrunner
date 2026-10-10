@@ -172,6 +172,16 @@ class DoctorTest(unittest.TestCase):
                 self.assertEqual(len(errors), 1, errors)
                 self.assertIn(expected, errors[0])
 
+    def test_roots_are_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = setup.check_agents({"$roots": [tmp, "/no/such/folder"], "a": {"cmd": [PY, "{prompt}"]}})
+        self.assertIn(("warn", "$roots: /no/such/folder is not a folder on this machine"), results)
+        self.assertIn(("ok", f"edit tasks may point inside: {tmp}, /no/such/folder"), results)
+        self.assertEqual(setup.check_agents({"$roots": "~/code", "a": {"cmd": [PY, "{prompt}"]}}),
+                         [("error", "$roots must be a list of folders")])
+        self.assertEqual(setup.check_agents({"$roots": ["~/code"]}),
+                         [("error", "agents.json must be an object with at least one agent")])
+
     def test_hooks_are_checked(self):
         good = {"$hooks": {"done": [PY, "-c", "pass", "{id}", "{title}", "{agent}", "{kind}", "{text}"]},
                 "a": {"cmd": [PY, "{prompt}"]}}

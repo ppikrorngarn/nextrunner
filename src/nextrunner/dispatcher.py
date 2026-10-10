@@ -6,7 +6,7 @@ from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .agents import COOLDOWN_MIN, TRANSIENT_HITS, TRANSIENT_MIN, classify, limit_reason, load_agents, load_hooks, \
-    pick_agent, rest_ends, set_down
+    load_roots, outside_roots, pick_agent, rest_ends, set_down
 from .board import claim, done, last_session, release
 from .db import CLAIMABLE, board_dir, get, log, now, tx
 from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent, run_hook
@@ -32,7 +32,8 @@ def clock(t):
     return time.strftime("%H:%M", time.localtime(t))
 
 
-def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1, sleep=time.sleep, hooks=None):
+def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1, sleep=time.sleep, hooks=None,
+             roots=None):
     """One pass over the board: run every free task, rerouting when an agent fails.
 
     Up to `jobs` runs go at once in total, and up to each agent's "parallel"
@@ -49,9 +50,13 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1,
 
     `hooks` ({kind: command}) run after a task is done, limited, failed or
     blocked; by default they come from agents.json when `agents` does too.
+    So do `roots`, the folders an edit task may point at: an edit task
+    outside every root is blocked instead of run.
     """
     if hooks is None:
         hooks = load_hooks() if agents is None else {}
+    if roots is None:
+        roots = load_roots() if agents is None else []
     agents = agents or load_agents()
     board = board_dir(conn)
 
@@ -79,6 +84,8 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1,
                     pending.remove(task_id)  # no starter for this name: someone pulls the task by hand
                     continue
                 agent, why = pick_agent(conn, task, agents, busy)
+                if agent and task["edit"] and outside_roots(task["cwd"] or str(board), roots):
+                    agent, why = None, "blocked: " + outside_roots(task["cwd"] or str(board), roots)
                 if why == "busy":
                     continue  # its agent is running another task; look again when a run ends
                 if why == "waiting":

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .agents import COOLDOWN_MIN, is_up, load_agents, set_down, set_up
+from .agents import COOLDOWN_MIN, is_up, load_agents, load_roots, outside_roots, set_down, set_up
 import re
 
 from .board import ME, add, approve, beat, cancel, claim, claim_next, done, fan_out, note, release, reopen, siblings
@@ -215,11 +215,13 @@ def run(a, conn):
 
     if a.cmd == "add":
         need(a.follow is None or get(conn, a.follow), f"no task {a.follow}")
+        folder = a.cwd or (get(conn, a.follow)["cwd"] if a.follow else None)
+        if a.edit or a.commit:
+            need(not outside_roots(folder, load_roots()), outside_roots(folder, load_roots()))
         if a.run and (a.edit or a.commit):
             # An agent asked for an edit task: hold it for a person, and keep it to the folder the agent was given.
             own = get(conn, a.run)
             own_cwd = own["cwd"] if own else None
-            folder = a.cwd or (get(conn, a.follow)["cwd"] if a.follow else None)
             need(own_cwd and folder and paths.inside(folder, own_cwd),
                  f"an edit task added from inside task {a.run} must stay in that task's folder"
                  + (f" ({own_cwd})" if own_cwd else ""))

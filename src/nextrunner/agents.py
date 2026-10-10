@@ -58,6 +58,7 @@ def limit_reason(text, width=200):
 
 LISTS = "$lists"  # the agents.json key that holds named word lists, spliced in where a command says "@name"
 HOOKS = "$hooks"  # the agents.json key that holds commands the dispatcher runs when a task ends
+ROOTS = "$roots"  # the agents.json key that lists the folders edit tasks may point at
 HOOK_KINDS = ("done", "limited", "failed", "blocked")
 HOOK_FIELDS = {"id", "title", "agent", "kind", "text"}  # placeholders a hook command may use
 
@@ -119,6 +120,32 @@ def hooks_of(raw, lists=None):
             raise ValueError(f"{HOOKS}.{kind} must be a non-empty list of strings")
         out[kind] = splice(command, lists if isinstance(lists, dict) else {}, f"{HOOKS}.{kind}")
     return out
+
+
+def roots_of(raw):
+    """The validated "$roots" of agents.json as loaded: [folder, ...]. Raises ValueError."""
+    roots = raw.get(ROOTS, []) if isinstance(raw, dict) else []
+    if not isinstance(roots, list) or not all(isinstance(r, str) and r for r in roots):
+        raise ValueError(f"{ROOTS} must be a list of folders")
+    return roots
+
+
+def outside_roots(folder, roots):
+    """Why `folder` may not hold an edit task under these roots, or None when it may (or no roots are set)."""
+    if roots and not any(paths.inside(folder, root) for root in roots):
+        return f"{folder} is outside {ROOTS} in agents.json ({', '.join(roots)})"
+    return None
+
+
+def load_roots():
+    """The edit roots in agents.json, or [] when there are none or no file."""
+    path = paths.agents_file()
+    if not path.exists():
+        return []
+    try:
+        return roots_of(json.loads(path.read_text()))
+    except ValueError as err:
+        sys.exit(f"{path}: {err} (nextrunner doctor explains)")
 
 
 def load_hooks():

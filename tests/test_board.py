@@ -1147,6 +1147,56 @@ class DispatchedRunTest(Base):
             self.assertEqual(db.get(self.conn, held)["held"], 0)
 
 
+class RootsTest(Base):
+    """$roots in agents.json: the folders an edit task may point at."""
+
+    EDITOR = {"cmd": OK["cmd"], "cmd_edit": [PY, "-c", "print('ran the edit command')"]}
+
+    def setUp(self):
+        super().setUp()
+        self.inside = Path(self.tmp.name) / "code" / "app"
+        self.inside.mkdir(parents=True)
+        self.outside = Path(self.tmp.name) / "elsewhere"
+        self.outside.mkdir()
+        agents_file = Path(self.tmp.name) / "agents.json"
+        agents_file.write_text(json.dumps({"$roots": [str(Path(self.tmp.name) / "code")], "alpha": self.EDITOR}))
+        patcher = mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path, "NEXTRUNNER_AGENTS": str(agents_file)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def refused(self, *args):
+        with self.assertRaises(SystemExit) as stop, contextlib.redirect_stderr(io.StringIO()):
+            cli.main(list(args))
+        return str(stop.exception)
+
+    def test_add_refuses_an_edit_task_outside_the_roots(self):
+        message = self.refused("add", "x", "--edit", "--cwd", str(self.outside))
+        self.assertIn("outside $roots", message)
+        self.assertIn(str(Path(self.tmp.name) / "code"), message)
+        self.assertIn("outside $roots", self.refused("add", "x", "--commit", "--cwd", str(self.outside)))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["add", "fine", "--edit", "--cwd", str(self.inside)])
+            cli.main(["add", "reading is fine anywhere", "--cwd", str(self.outside)])
+        self.assertEqual(len(out.getvalue().split()), 2)
+
+    def test_dispatch_blocks_an_edit_task_outside_the_roots(self):
+        outside = board.add(self.conn, "sneaked in", cwd=str(self.outside), edit=True)
+        inside = board.add(self.conn, "fine", cwd=str(self.inside), edit=True)
+        bare = board.add(self.conn, "no folder: runs next to the board", edit=True)
+        dispatcher.dispatch(self.conn, timeout=30, say=lambda l: None)  # agents, hooks and roots from the file
+        self.assertEqual(self.status(outside), "blocked")
+        reason = self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'blocked'", (outside,)).fetchone()
+        self.assertIn("outside $roots", reason["text"])
+        self.assertEqual(self.status(inside), "done")
+        self.assertEqual(self.status(bare), "blocked")
+
+    def test_no_roots_means_any_folder(self):
+        t = board.add(self.conn, "anywhere", cwd=str(self.outside), edit=True)
+        self.dispatch({"alpha": self.EDITOR})  # agents given by hand: no roots
+        self.assertEqual(self.status(t), "done")
+        self.assertIsNone(agents.outside_roots(str(self.outside), []))
+
+
 class WatchTest(Base):
     def test_screen_flags_stale_and_expired_and_resting(self):
         quiet = board.add(self.conn, "quiet task", to="alpha")
