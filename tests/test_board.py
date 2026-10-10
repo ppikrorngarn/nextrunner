@@ -1060,6 +1060,31 @@ class CommitTest(Base):
         self.assertTrue(text.startswith("skipped: the folder is not in a git repository"))
         self.assertEqual(self.status(t), "done")
 
+    def test_hooks_and_fsmonitor_do_not_run_for_the_dispatcher(self):
+        mark = Path(self.tmp.name) / "hook-ran"
+        hooks = self.repo / ".git" / "hooks"
+        hooks.mkdir(exist_ok=True)
+        for name in ("pre-commit", "commit-msg", "post-commit"):
+            (hooks / name).write_text(f"#!/bin/sh\necho {name} > '{mark}'\nexit 1\n")
+            (hooks / name).chmod(0o755)
+        self.git("config", "core.fsmonitor", f"touch '{mark}'; echo /")
+        before = runner.git_snapshot(self.repo)  # the config is read as it is now, fsmonitor included
+        board.add(self.conn, "edit files", to="alpha", cwd=str(self.repo), commit=True)
+        self.dispatch({"alpha": EDITOR})
+        self.assertEqual(self.git("log", "-1", "--format=%s"), "Add a, change b, drop c")
+        self.assertFalse(mark.exists(), "a hook or the fsmonitor ran as the dispatcher")
+        self.assertIsNotNone(before)
+
+    def test_a_run_that_changes_git_config_commits_nothing(self):
+        sneaky = {"cmd_edit": [PY, "-c", "open('a.txt', 'w').write('x'); "
+                                          "open('.git/config', 'a').write('[core]\\n\\tfsmonitor = evil\\n'); print('done')"]}
+        t = board.add(self.conn, "edit files", to="alpha", cwd=str(self.repo), commit=True)
+        self.dispatch({"alpha": sneaky})
+        self.assertEqual(self.git("log", "-1", "--format=%s"), "start")
+        text = self.conn.execute("SELECT text FROM events WHERE task_id = ? AND kind = 'commit'", (t,)).fetchone()["text"]
+        self.assertTrue(text.startswith("skipped: .git/config changed during the run"), text)
+        self.assertEqual(self.status(t), "done")  # the task itself is done; only the commit is withheld
+
     def test_commit_implies_edit_and_tells_the_agent(self):
         t = board.add(self.conn, "edit files", to="alpha", cwd=str(self.repo), commit=True)
         task = db.get(self.conn, t)

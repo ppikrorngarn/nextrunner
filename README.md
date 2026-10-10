@@ -245,7 +245,11 @@ files that were clean before and changed during the run:
   what was already there.
 - Anything you had staged stays staged and out of the commit.
 - A failed run commits nothing. A folder outside a git repository is skipped.
-- It never pushes. Git hooks run as usual; if one refuses, the board says so.
+- It never pushes. Git hooks and `core.fsmonitor` are off for the
+  dispatcher's own git commands, because the agent worked inside the
+  repository and could have written them; they would run as you, outside the
+  agent's sandbox. A run that changed `.git/config` commits nothing, and the
+  board says so.
 
 The outcome is a `commit` event on the task (`nextrunner show <id>`). Two
 `--commit` tasks in the same repository at the same time (`--jobs` above 1)

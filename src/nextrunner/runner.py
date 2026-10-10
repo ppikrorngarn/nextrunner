@@ -175,9 +175,18 @@ def run_hook(command, task, agent, kind, text):
 # ---- commits ----------------------------------------------------------------
 # For a task added with --commit, the dispatcher commits what the agent changed,
 # so no agent needs write access to .git. It never pushes.
+#
+# The agent worked inside the repository, so its .git folder may hold what the
+# agent wrote. Hooks and the file-system monitor are programs git would start
+# from there, as this user and outside the agent's sandbox, so they are off for
+# every git command here, and a run that changed .git/config commits nothing.
+
+GIT_SAFE = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]
+
 
 def git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return subprocess.run(["git", "-C", str(cwd), *GIT_SAFE, *args], capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL)
 
 
 def _file_hash(path):
@@ -188,10 +197,11 @@ def _file_hash(path):
 
 
 def git_snapshot(cwd):
-    """(repo root, {changed path: content hash}) for cwd's repo, or None outside a repo."""
+    """(repo root, {changed path: content hash}, hash of .git/config) for cwd's repo, or None outside a repo."""
     if git(cwd, "rev-parse", "--is-inside-work-tree").stdout.strip() != "true":
         return None
     top = Path(git(cwd, "rev-parse", "--show-toplevel").stdout.strip())
+    config = _file_hash(top / git(top, "rev-parse", "--git-path", "config").stdout.strip())  # relative to top, or absolute
     parts = git(top, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout.split("\0")
     paths, i = set(), 0
     while i < len(parts):
@@ -202,7 +212,7 @@ def git_snapshot(cwd):
         if entry[0] in "RC":  # a rename lists the old path next
             paths.add(parts[i])
             i += 1
-    return top, {p: _file_hash(top / p) for p in paths}
+    return top, {p: _file_hash(top / p) for p in paths}, config
 
 
 def commit_changes(task, agent, before, reply):
@@ -211,12 +221,15 @@ def commit_changes(task, agent, before, reply):
     Only paths that were clean before the run are committed. A file that already
     had changes before the run is left alone, and named, because the agent's
     change cannot be told apart from what was there. Anything staged before the
-    run stays staged and out of the commit.
+    run stays staged and out of the commit. A run that changed .git/config
+    commits nothing: that file can make git run programs.
     """
     if before is None:
         return "skipped: the folder is not in a git repository"
-    top, was = before
-    after = git_snapshot(top)[1]
+    top, was, config = before
+    _, after, config_now = git_snapshot(top)
+    if config_now != config:
+        return "skipped: .git/config changed during the run; look at it before committing by hand"
     new = sorted(p for p in after if p not in was)
     mixed = sorted(p for p in after if p in was and after[p] != was[p])
     left = f"; left uncommitted because they had changes before the task: {', '.join(mixed)}" if mixed else ""
@@ -227,7 +240,7 @@ def commit_changes(task, agent, before, reply):
     added = git(top, "add", "-A", "--", *new)
     if added.returncode:
         return f"failed: git add: {added.stderr.strip()[:300]}"
-    made = git(top, "commit", "-q", "-m", subject, "-m", f"Board task {task['id']}, done by {agent}.",
+    made = git(top, "commit", "-q", "--no-verify", "-m", subject, "-m", f"Board task {task['id']}, done by {agent}.",
                "--only", "--", *new)
     if made.returncode:
         return f"failed: git commit: {(made.stderr or made.stdout).strip()[:300]}"
