@@ -1069,6 +1069,84 @@ class CommitTest(Base):
         self.assertIn("COMMIT:", prompt)
 
 
+class DispatchedRunTest(Base):
+    """Inside a run the dispatcher started, the board refuses what is a person's call."""
+
+    def setUp(self):
+        super().setUp()
+        self.folder = Path(self.tmp.name) / "work"
+        self.folder.mkdir()
+        self.task = board.add(self.conn, "the running task", to="alpha", cwd=str(self.folder), edit=True)
+        patcher = mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path, dispatcher.RUN_VAR: self.task})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def cli(self, *args):
+        with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+            cli.main(list(args))
+        return out.getvalue(), err.getvalue()
+
+    def refused(self, *args):
+        with self.assertRaises(SystemExit) as stop, contextlib.redirect_stderr(io.StringIO()):
+            cli.main(list(args))
+        return str(stop.exception)
+
+    def test_the_agent_gets_the_task_id_in_its_environment(self):
+        show = {"cmd": [PY, "-c", f"import os; print(os.environ['{dispatcher.RUN_VAR}'])"]}
+        t = board.add(self.conn, "who am I", to="beta")
+        with mock.patch.dict(os.environ, {dispatcher.RUN_VAR: ""}):
+            self.dispatch({"beta": show})
+        self.assertEqual(db.get(self.conn, t)["result"], t)
+
+    def test_a_persons_calls_are_refused_inside_a_run(self):
+        held = board.add(self.conn, "post it", hold=True)
+        blocked = board.add(self.conn, "stuck")
+        self.conn.execute("UPDATE tasks SET status = 'blocked' WHERE id = ?", (blocked,))
+        for args in (["ok", held], ["reopen", blocked], ["cancel", held], ["down", "alpha"], ["up", "alpha"], ["init"]):
+            message = self.refused(*args)
+            self.assertIn("person's call", message)
+            self.assertIn(self.task, message)
+        self.assertEqual(db.get(self.conn, held)["held"], 1)
+        self.assertEqual(self.status(blocked), "blocked")
+
+    def test_read_tasks_notes_and_results_still_work(self):
+        out, _ = self.cli("add", "look at this", "--to", "beta", "--cwd", "/anywhere")
+        self.assertEqual(db.get(self.conn, out.strip())["held"], 0)
+        self.cli("note", self.task, "--as", "alpha", "halfway")
+        self.assertIn(("alpha", "note"), self.kinds(self.task))
+
+    def test_an_edit_task_is_held_and_kept_to_the_runs_folder(self):
+        sub = self.folder / "sub"
+        sub.mkdir()
+        out, err = self.cli("add", "fix it", "--edit", "--cwd", str(sub))
+        task = db.get(self.conn, out.strip())
+        self.assertEqual((task["held"], task["edit"]), (1, 1))
+        self.assertIn("waits for `nextrunner ok`", err)
+        out, _ = self.cli("add", "fix it, already held", "--commit", "--cwd", str(self.folder), "--hold")
+        self.assertEqual(db.get(self.conn, out.strip())["held"], 1)
+        elsewhere = Path(self.tmp.name) / "elsewhere"
+        elsewhere.mkdir()
+        self.assertIn("must stay in that task's folder", self.refused("add", "x", "--edit", "--cwd", str(elsewhere)))
+        self.assertIn("must stay in that task's folder", self.refused("add", "x", "--edit", "--cwd", str(self.folder.parent)))
+        earlier = board.add(self.conn, "earlier", to="alpha", cwd=str(elsewhere))
+        self.assertIn("must stay", self.refused("add", "x", "--edit", "--follow", earlier))  # the folder comes with --follow
+
+    def test_a_run_without_a_folder_may_not_add_edit_tasks(self):
+        bare = board.add(self.conn, "no folder", to="alpha")
+        with mock.patch.dict(os.environ, {dispatcher.RUN_VAR: bare}):
+            self.assertIn("must stay in that task's folder", self.refused("add", "x", "--edit", "--cwd", str(self.folder)))
+
+    def test_outside_a_run_nothing_changes(self):
+        with mock.patch.dict(os.environ, {dispatcher.RUN_VAR: ""}):
+            del os.environ[dispatcher.RUN_VAR]
+            out, err = self.cli("add", "fix it", "--edit", "--cwd", str(Path(self.tmp.name) / "anywhere"))
+            self.assertEqual(db.get(self.conn, out.strip())["held"], 0)
+            self.assertEqual(err, "")
+            held = board.add(self.conn, "post it", hold=True)
+            self.cli("ok", held)
+            self.assertEqual(db.get(self.conn, held)["held"], 0)
+
+
 class WatchTest(Base):
     def test_screen_flags_stale_and_expired_and_resting(self):
         quiet = board.add(self.conn, "quiet task", to="alpha")

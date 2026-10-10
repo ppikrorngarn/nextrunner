@@ -87,12 +87,14 @@ def usage_line(spec_usage, text):
     return " ".join(parts)
 
 
-def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=None, trace=None, usage=None):
+def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=None, trace=None, usage=None,
+              env=None):
     """Start one agent and wait. Returns (ok, reply or error text, session ID or None, run line).
 
     The run line says how the run went, for the board: seconds, exit code,
     any "usage" figures, and the trace file. `trace` is where both output
-    streams are kept, or None to keep nothing.
+    streams are kept, or None to keep nothing. `env` is the environment the
+    agent gets (default: this process's own).
     """
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "reply.txt"
@@ -100,7 +102,7 @@ def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=N
         started, mono = time.time(), time.monotonic()
         try:
             proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                                  timeout=timeout, stdin=subprocess.DEVNULL)
+                                  timeout=timeout, stdin=subprocess.DEVNULL, env=env)
         except subprocess.TimeoutExpired as err:
             write_trace(trace, cmd, cwd, started, mono, err, f"timed out after {timeout}s")
             return False, f"timed out after {timeout}s", session, run_line(mono, None, "", trace)

@@ -14,12 +14,13 @@ import re
 
 from .board import ME, add, approve, beat, cancel, claim, claim_next, done, fan_out, note, release, reopen, siblings
 from .db import connect, get
-from .dispatcher import dispatch
+from .dispatcher import RUN_VAR, dispatch
 from .setup import doctor, init
 from . import paths
 from .view import FINISHED, parse_when, print_task, render_compare, render_status, shown_status, stamp
 
 PLACEHOLDER = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")  # {LIKE_THIS} in a brief file, filled with --fill
+PERSONS_CALL = ("ok", "reopen", "cancel", "down", "up", "init")  # refused inside a dispatched run
 
 DOC = """\
 nextrunner: a shared task board for a team of AI agents.
@@ -183,6 +184,10 @@ def main(argv=None):
             p.error("--since must be before --until")
     if a.home:
         os.environ["NEXTRUNNER_HOME"] = a.home
+    a.run = os.environ.get(RUN_VAR)  # the task this command runs inside, when the dispatcher started it
+    if a.run and a.cmd in PERSONS_CALL:
+        sys.exit(f"refused: `{a.cmd}` is a person's call, and this command runs inside task {a.run}, "
+                 f"started by the dispatcher")
     if a.cmd == "where":
         for label, path, why in paths.describe():
             print(f"{label:<7} {path}  ({why}){'' if path.exists() else '  [not created yet]'}")
@@ -210,6 +215,17 @@ def run(a, conn):
 
     if a.cmd == "add":
         need(a.follow is None or get(conn, a.follow), f"no task {a.follow}")
+        if a.run and (a.edit or a.commit):
+            # An agent asked for an edit task: hold it for a person, and keep it to the folder the agent was given.
+            own = get(conn, a.run)
+            own_cwd = own["cwd"] if own else None
+            folder = a.cwd or (get(conn, a.follow)["cwd"] if a.follow else None)
+            need(own_cwd and folder and paths.inside(folder, own_cwd),
+                 f"an edit task added from inside task {a.run} must stay in that task's folder"
+                 + (f" ({own_cwd})" if own_cwd else ""))
+            if not a.hold:
+                a.hold = True
+                print(f"held: an edit task added from inside task {a.run} waits for `nextrunner ok`", file=sys.stderr)
         if len(a.to) > 1:
             ids = fan_out(conn, a.title, a.body, a.to, cwd=a.cwd, by=a.by, edit=a.edit, commit=a.commit, hold=a.hold)
             print("\n".join(ids))

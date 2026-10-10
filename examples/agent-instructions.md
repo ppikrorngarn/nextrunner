@@ -69,7 +69,10 @@ nextrunner show <id>                # read the result
   `nextrunner compare <id>` shows the answers together.
 - `--hold`: nobody may take the task until a person runs `nextrunner ok <id>`. Use
   it for anything that acts outside the machine (a message to post, a thing
-  to publish). Never run `nextrunner ok` yourself: the approval is the person's.
+  to publish). The approval is the person's: inside a run the dispatcher
+  started, `nextrunner ok` is refused, and so are `reopen`, `cancel`, `down`,
+  `up` and `init`. An `--edit` or `--commit` task you add from inside a run
+  is held for the person and must stay inside your task's folder.
 
 ## Rules
 

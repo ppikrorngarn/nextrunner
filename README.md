@@ -140,6 +140,11 @@ not need one; the dispatcher holds the claim and finishes the task.
 Run `nextrunner --help` for every command. Set `NEXTRUNNER_AGENT` to skip
 `--as`.
 
+Inside a run the dispatcher started (`NEXTRUNNER_RUN` is set to the task's
+ID), the commands that are a person's call are refused: `ok`, `reopen`,
+`cancel`, `down`, `up` and `init`. An edit task added from there is held for
+`nextrunner ok` and must stay inside the running task's folder. See "Safety".
+
 ## How tasks move
 
 - A task is `ready`, `running`, `done`, `blocked` or `cancelled`.
@@ -444,12 +449,16 @@ the UI) on a `v*` tag and attaches them to a GitHub Release.
 - The dispatcher starts agents with whatever permissions your commands give
   them. Keep `cmd` read-only and add `cmd_edit` only for agents you trust
   with changes.
-- `--hold` guards against a task running before a person looked at it. Any
-  agent with a shell can run `nextrunner ok`, so it is a record of who approved
-  what, not a lock.
-- Read and edit levels guard against accidents. They are not a security
-  boundary: every agent runs as you, and any agent with a shell can add an
-  `--edit` task.
+- `--hold` keeps a task from running before a person looked at it. Every
+  agent the dispatcher starts has `NEXTRUNNER_RUN` set to its task's ID, and
+  with it set, `nextrunner ok`, `reopen`, `cancel`, `down`, `up` and `init` are
+  refused: those are a person's calls. An agent may still add tasks; one added
+  with `--edit` or `--commit` from inside a run is held for `nextrunner ok`
+  and must stay inside the folder the running task was given.
+- That guard is against text an agent read telling it to approve or widen
+  its own work. It is not a security boundary: every agent runs as you, and
+  a program that unsets the variable gets the plain board back. Keep `cmd`
+  as narrow as the agent's own flags allow.
 - The board file is for one machine. Do not put it on a network drive or in
   a synced folder.
 

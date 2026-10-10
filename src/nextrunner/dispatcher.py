@@ -1,4 +1,5 @@
 """The dispatcher: one pass over the board, starting an agent for every free task."""
+import os
 import sys
 import time
 from collections import Counter
@@ -9,6 +10,12 @@ from .agents import COOLDOWN_MIN, TRANSIENT_HITS, TRANSIENT_MIN, classify, limit
 from .board import claim, done, last_session, release
 from .db import CLAIMABLE, board_dir, get, log, now, tx
 from .runner import build_prompt, command_and_session, commit_changes, git_snapshot, run_agent, run_hook
+
+# Set in the environment of every agent the dispatcher starts, to the ID of the task it is
+# running. The command line reads it: inside a run, the commands that are a person's call
+# (ok, reopen, cancel, down, up, init) are refused, and a new edit task is held for approval.
+RUN_VAR = "NEXTRUNNER_RUN"
+
 
 def self_command():
     """The command that starts this program again: the bundled app itself, or python -m nextrunner."""
@@ -111,7 +118,8 @@ def dispatch(conn, agents=None, timeout=600, dry_run=False, say=say_now, jobs=1,
                 trace = board / "runs" / task_id / f"{attempt}-{agent}.log"
                 future = pool.submit(run_agent, cmd, spec.get("reply", "stdout"),
                                      build_prompt(conn, task, agent, cwd, resuming=bool(session)), cwd, board,
-                                     limit, session, spec.get("session"), trace, spec.get("usage"))
+                                     limit, session, spec.get("session"), trace, spec.get("usage"),
+                                     {**os.environ, RUN_VAR: task_id})
                 running[future] = (task_id, agent, token, before)
                 busy[agent] += 1
             if not running:

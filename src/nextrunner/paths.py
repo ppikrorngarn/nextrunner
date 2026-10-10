@@ -76,6 +76,15 @@ def describe():
             ("log", log_file(), why("NEXTRUNNER_LOG"))]
 
 
+def inside(path, root):
+    """True when `path` is `root` or lies under it, after expanding ~ and following links."""
+    try:
+        Path(path).expanduser().resolve().relative_to(Path(root).expanduser().resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def is_sandboxed():
     """True when any of the variables above moved a file away from the platform default."""
     return any(os.environ.get(v) for v in ("NEXTRUNNER_HOME", "NEXTRUNNER_DB", "NEXTRUNNER_AGENTS", "NEXTRUNNER_LOG"))
