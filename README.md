@@ -299,6 +299,13 @@ and one that fails is noted on the task as a `hook` event and never counts
 against the task. `nextrunner doctor` checks the programs and placeholders.
 Nothing runs unless you add the key.
 
+`{title}` and `{text}` are what the task and the agent said, so treat them
+as data: give each its own word in the command, as above, rather than
+pasting it into a script or a shell line that the hook's program will parse.
+In the `osascript` example the title sits inside an AppleScript string, so a
+title with a double quote in it ends the string early; a safer notifier
+takes the text as an argument of its own.
+
 ## Running the dispatcher all the time (macOS)
 
 `examples/nextrunner.dispatch.plist` is a LaunchAgent template that runs
