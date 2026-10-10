@@ -469,7 +469,9 @@ then runs it the way a user would: version, add, dispatch with the fake dev agen
 through a pseudo-terminal. PyInstaller cannot cross-compile, so one build per OS and CPU.
 `.github/workflows/release.yml` builds macOS arm64 and x64, Linux x64 and arm64, and Windows
 (experimental: a failed Windows build does not stop the release, and its smoke test skips
-the UI) on a `v*` tag and attaches them to a GitHub Release.
+the UI) on a `v*` tag and attaches them to a GitHub Release, with a build provenance
+attestation for each file: `gh attestation verify dist/<file> --repo <owner>/nextrunner`
+checks that the file came out of that workflow run.
 
 ## Safety
 
@@ -507,8 +509,8 @@ the UI) on a `v*` tag and attaches them to a GitHub Release.
 PYTHONPATH=src python3 -m unittest -v   # or: uv run python -m unittest -v
 ```
 
-`.github/workflows/test.yml` runs them on Linux and macOS, on Python 3.10 and
-3.13, for every push and pull request.
+`.github/workflows/test.yml` runs them on Linux, macOS and Windows, on Python
+3.10 and 3.13, for every push and pull request.
 
 ## Giving the board to your agents
 

@@ -1,0 +1,11 @@
+# Weekly update proposals for the pinned actions (by commit, see the workflows) and the Python lock file.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
