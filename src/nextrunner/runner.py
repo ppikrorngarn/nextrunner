@@ -61,8 +61,11 @@ def command_and_session(conn, task, agent, spec):
     return command_for(spec, task), None
 
 
-def write_trace(path, cmd, cwd, started, mono, proc, outcome):
-    """Keep everything a run printed, with how it was started and how it ended, for reading later."""
+def write_trace(path, cmd, cwd, started, mono, proc, outcome, stdin=None):
+    """Keep everything a run printed, with how it was started and how it ended, for reading later.
+
+    `stdin` is the text the agent was given on standard input, if any; it goes in the trace too.
+    """
     if path is None:
         return
     try:
@@ -71,7 +74,8 @@ def write_trace(path, cmd, cwd, started, mono, proc, outcome):
         head = [f"command: {' '.join(cmd)}", f"cwd: {cwd}",
                 f"started: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started))}",
                 f"outcome: {outcome}", f"seconds: {time.monotonic() - mono:.0f}"]
-        streams = [("stdout", getattr(proc, "stdout", None)), ("stderr", getattr(proc, "stderr", None))]
+        streams = [("stdin", stdin)] if stdin is not None else []
+        streams += [("stdout", getattr(proc, "stdout", None)), ("stderr", getattr(proc, "stderr", None))]
         body = "".join(f"\n--- {name} ---\n{text if isinstance(text, str) else (text or b'').decode(errors='replace')}"
                        for name, text in streams)
         paths.private_file(path, "\n".join(head) + "\n" + body)
@@ -97,19 +101,23 @@ def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=N
     any "usage" figures, and the trace file. `trace` is where both output
     streams are kept, or None to keep nothing. `env` is the environment the
     agent gets (default: this process's own).
+
+    A command with no {prompt} word gets the prompt on standard input instead,
+    which keeps it off the command line, where `ps` shows it to every user.
     """
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "reply.txt"
+        stdin = prompt if not any("{prompt}" in part for part in cmd) else None
         cmd = [part.format(prompt=prompt, cwd=cwd, out=out, board=board, session=session or "") for part in cmd]
         started, mono = time.time(), time.monotonic()
         try:
-            proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                                  timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+            proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env,
+                                  **({"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}))
         except subprocess.TimeoutExpired as err:
-            write_trace(trace, cmd, cwd, started, mono, err, f"timed out after {timeout}s")
+            write_trace(trace, cmd, cwd, started, mono, err, f"timed out after {timeout}s", stdin)
             return False, f"timed out after {timeout}s", session, run_line(mono, None, "", trace)
         except OSError as err:
-            write_trace(trace, cmd, cwd, started, mono, None, str(err))
+            write_trace(trace, cmd, cwd, started, mono, None, str(err), stdin)
             return False, str(err), session, run_line(mono, None, "", trace)
         ok, reply = proc.returncode == 0, proc.stdout.strip()
         found = None
@@ -131,12 +139,12 @@ def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=N
     found = found or session
     line = run_line(mono, proc.returncode, usage_line(usage, proc.stdout + "\n" + proc.stderr), trace)
     if ok and reply:
-        write_trace(trace, cmd, cwd, started, mono, proc, "done")
+        write_trace(trace, cmd, cwd, started, mono, proc, "done", stdin)
         return True, reply, found, line
     # Show both streams: one agent prints noise on stderr and its real error as JSON on stdout.
     # The tail is kept, and the board's limit check reads this text, so the error must not be lost.
     detail = "\n".join(part for part in (proc.stderr.strip(), reply or proc.stdout.strip()) if part)
-    write_trace(trace, cmd, cwd, started, mono, proc, "failed" if proc.returncode else "empty reply")
+    write_trace(trace, cmd, cwd, started, mono, proc, "failed" if proc.returncode else "empty reply", stdin)
     return False, (detail or f"exit code {proc.returncode}")[-2000:], found, line
 
 

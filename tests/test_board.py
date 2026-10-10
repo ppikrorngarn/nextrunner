@@ -588,6 +588,18 @@ class TraceTest(Base):
         self.assertEqual((self.runs_dir() / t).stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.runs_dir() / t / "1-alpha.log").stat().st_mode & 0o777, 0o600)
 
+    def test_a_command_without_prompt_gets_it_on_stdin(self):
+        reader = {"cmd": [PY, "-c", "import sys; print('got: ' + sys.stdin.read().splitlines()[0])"]}
+        t = board.add(self.conn, "by stdin", to="alpha")
+        self.dispatch({"alpha": reader})
+        self.assertEqual(db.get(self.conn, t)["result"], f"got: You are alpha, taking task {t} from the shared agent board.")
+        text = (self.runs_dir() / t / "1-alpha.log").read_text()
+        self.assertIn("--- stdin ---\nYou are alpha", text)  # the trace still has the whole prompt
+        self.assertNotIn(t, text.split("\n", 1)[0])             # and the command line does not
+        t2 = board.add(self.conn, "by argument", to="beta")
+        self.dispatch({"beta": ECHO})
+        self.assertNotIn("--- stdin ---", (self.runs_dir() / t2 / "1-beta.log").read_text())
+
     def test_every_attempt_gets_its_own_trace(self):
         t = board.add(self.conn, "retried")
         self.dispatch({"alpha": BROKEN, "beta": OK})

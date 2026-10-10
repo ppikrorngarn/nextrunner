@@ -385,6 +385,12 @@ Placeholders: `{prompt}` is the task text, `{cwd}` the task's folder,
 `{out}` a temporary file path, `{board}` the folder holding the board file
 (an agent needs write access there to leave notes).
 
+A command with no `{prompt}` word gets the task text on standard input
+instead. Prefer that when the program reads its prompt from stdin: a prompt
+on the command line is visible to every user on the machine, through `ps`,
+for as long as the run lasts. `nextrunner doctor` says which commands use
+stdin, and the trace keeps the text either way.
+
 `reply` says where the agent's answer is:
 
 - `stdout`: whatever the program prints.
@@ -484,7 +490,9 @@ the UI) on a `v*` tag and attaches them to a GitHub Release.
 - The board, `agents.json` and the run traces are written readable by your
   user only, and a folder nextrunner makes is too. A folder that already
   existed keeps its mode; `chmod 700` it yourself if other people have
-  accounts on the machine.
+  accounts on the machine. The prompt is on the agent's command line while
+  a run lasts, where `ps` shows it to every user, unless the command takes
+  it on standard input; see "agents.json".
 
 ## Tests
 

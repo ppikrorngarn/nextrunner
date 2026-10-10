@@ -162,9 +162,11 @@ def check_agents(agents):
             add("error", f"{name}: timeout must be a number of seconds above 0, not {timeout!r}")
             problems += 1
         if not problems:
+            stdin = [key for key in COMMAND_KEYS if spec.get(key) and not any("{prompt}" in w for w in spec[key])]
             add("ok", f"{name}: {'read and edit' if spec.get('cmd_edit') else 'read only'}, "
                       f"parallel {spec.get('parallel', 1)}"
-                      f"{f', timeout {timeout:g}s' if timeout is not None else ''}")
+                      f"{f', timeout {timeout:g}s' if timeout is not None else ''}"
+                      f"{f', prompt on stdin for {chr(44).join(stdin)}' if stdin else ''}")
     if not shutil.which("git"):
         add("warn", "git is not on PATH, so --commit tasks will be skipped")
     return results

@@ -177,6 +177,11 @@ class DoctorTest(unittest.TestCase):
                 self.assertEqual(len(errors), 1, errors)
                 self.assertIn(expected, errors[0])
 
+    def test_doctor_says_which_commands_take_the_prompt_on_stdin(self):
+        results = setup.check_agents({"a": {"cmd": [PY, "-"], "cmd_edit": [PY, "{prompt}"]}, "b": {"cmd": [PY, "{prompt}"]}})
+        self.assertIn(("ok", "a: read and edit, parallel 1, prompt on stdin for cmd"), results)
+        self.assertIn(("ok", "b: read only, parallel 1"), results)
+
     def test_roots_are_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             results = setup.check_agents({"$roots": [tmp, "/no/such/folder"], "a": {"cmd": [PY, "{prompt}"]}})
