@@ -76,6 +76,26 @@ def describe():
             ("log", log_file(), why("NEXTRUNNER_LOG"))]
 
 
+def private_dir(path):
+    """Make the folder if needed. A folder made here is readable by this user only; an existing one keeps its mode."""
+    path = Path(path)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+        os.chmod(path, 0o700)
+    return path
+
+
+def private_file(path, text=None):
+    """Write `text` to `path` (or just create it), readable by this user only, whether or not it existed."""
+    path = Path(path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if text is not None else 0), 0o600)
+    with os.fdopen(fd, "w") as f:
+        if text is not None:
+            f.write(text)
+    os.chmod(path, 0o600)
+    return path
+
+
 def inside(path, root):
     """True when `path` is `root` or lies under it, after expanding ~ and following links."""
     try:

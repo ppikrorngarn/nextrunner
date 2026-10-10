@@ -7,6 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from . import paths
 from .agents import command_for
 from .board import last_session
 from .db import get
@@ -65,14 +66,15 @@ def write_trace(path, cmd, cwd, started, mono, proc, outcome):
     if path is None:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        paths.private_dir(path.parent.parent)  # runs/
+        paths.private_dir(path.parent)         # runs/<task>/
         head = [f"command: {' '.join(cmd)}", f"cwd: {cwd}",
                 f"started: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started))}",
                 f"outcome: {outcome}", f"seconds: {time.monotonic() - mono:.0f}"]
         streams = [("stdout", getattr(proc, "stdout", None)), ("stderr", getattr(proc, "stderr", None))]
         body = "".join(f"\n--- {name} ---\n{text if isinstance(text, str) else (text or b'').decode(errors='replace')}"
                        for name, text in streams)
-        path.write_text("\n".join(head) + "\n" + body)
+        paths.private_file(path, "\n".join(head) + "\n" + body)
     except OSError:
         pass  # a missing trace must never fail the run
 

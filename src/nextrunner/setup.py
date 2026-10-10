@@ -53,8 +53,8 @@ def init(agent_args=(), force=False):
         text = json.dumps(dict(parse_agent(a) for a in agent_args), indent=2) + "\n"
     else:
         text = example_text()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    paths.private_dir(path.parent)
+    paths.private_file(path, text)  # commands may carry flags a person would not show around
     kind = "your agents" if agent_args else "a template with placeholder agents"
     return [f"wrote {path} ({kind})",
             "next: edit it so each command starts your real agent, then run: nextrunner doctor",

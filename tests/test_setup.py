@@ -43,6 +43,11 @@ class InitTest(unittest.TestCase):
         with mock.patch.object(setup.os, "name", "posix"):
             self.assertEqual(setup.split_command(r"bot --say a\ b"), ["bot", "--say", "a b"])  # a backslash escapes there
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX file modes")
+    def test_the_file_is_private(self):
+        setup.init()
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
     def test_never_overwrites_unless_forced(self):
         self.path.write_text("{}")
         with self.assertRaises(SystemExit):

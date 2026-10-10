@@ -60,8 +60,10 @@ def now():
 
 
 def connect(path=None):
+    """Open the board, making it if needed. The board file is readable by this user only; so is a folder made here."""
     path = Path(path) if path else paths.db_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    paths.private_dir(path.parent)
+    paths.private_file(path)  # SQLite gives the WAL and lock files the same mode as the board
     conn = sqlite3.connect(path, timeout=5, isolation_level=None)
     conn.row_factory = sqlite3.Row
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'tasks'").fetchone():

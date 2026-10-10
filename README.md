@@ -481,6 +481,10 @@ the UI) on a `v*` tag and attaches them to a GitHub Release.
   whoever adds it.
 - The board file is for one machine. Do not put it on a network drive or in
   a synced folder.
+- The board, `agents.json` and the run traces are written readable by your
+  user only, and a folder nextrunner makes is too. A folder that already
+  existed keeps its mode; `chmod 700` it yourself if other people have
+  accounts on the machine.
 
 ## Tests
 

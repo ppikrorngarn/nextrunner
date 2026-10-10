@@ -580,6 +580,14 @@ class TraceTest(Base):
         self.assertIn("--- stderr ---\nwarming up", text)
         self.assertEqual(db.get(self.conn, t)["result"], "the reply")  # the reply itself is unchanged
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX file modes")
+    def test_traces_are_private(self):
+        t = board.add(self.conn, "traced", to="alpha")
+        self.dispatch({"alpha": OK})
+        self.assertEqual(self.runs_dir().stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.runs_dir() / t).stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.runs_dir() / t / "1-alpha.log").stat().st_mode & 0o777, 0o600)
+
     def test_every_attempt_gets_its_own_trace(self):
         t = board.add(self.conn, "retried")
         self.dispatch({"alpha": BROKEN, "beta": OK})

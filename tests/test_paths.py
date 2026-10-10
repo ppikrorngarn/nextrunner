@@ -67,6 +67,22 @@ class PathsTest(unittest.TestCase):
             db.connect().close()
             self.assertTrue((Path(tmp) / "new" / "folder" / "board.db").exists())
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX file modes")
+    def test_the_boards_files_are_private(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(NEXTRUNNER_HOME=str(Path(tmp) / "home")):
+            home = Path(tmp) / "home"
+            db.connect().close()
+            self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((home / "board.db").stat().st_mode & 0o777, 0o600)
+            (home / "board.db").chmod(0o644)  # an old board gets tightened on the next open
+            db.connect().close()
+            self.assertEqual((home / "board.db").stat().st_mode & 0o777, 0o600)
+            shared = Path(tmp) / "shared"
+            shared.mkdir(mode=0o755)
+            with self.env(NEXTRUNNER_HOME=str(shared)):
+                db.connect().close()
+            self.assertEqual(shared.stat().st_mode & 0o777, 0o755)  # a folder that already existed keeps its mode
+
     def test_home_flag_moves_every_file(self):
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp, self.env(), contextlib.redirect_stdout(out):
