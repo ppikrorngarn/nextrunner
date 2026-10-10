@@ -453,7 +453,9 @@ nextrunner add "Now add tests for it" --follow t_0e8ea7858s --edit
 
 If the agent has no resume command for that level, or the follow-up goes to
 another agent, the run starts fresh and the prompt includes the earlier
-task's result instead. Any command placeholder is filled with
+task's result instead. The ID is taken from the program's output, not from
+what the model wrote: a resumed run keeps the session it was given whatever
+its output says, and an ID that also appears in the reply is left alone. Any command placeholder is filled with
 `str.format`, so a literal `{` or `}` in a command must be doubled.
 
 `agents.json` lives outside the repo, because it describes your own setup.

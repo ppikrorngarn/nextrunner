@@ -136,7 +136,13 @@ def run_agent(cmd, mode, prompt, cwd, board, timeout, session=None, session_re=N
                 reply, ok = str(data.get(mode[5:], "")).strip(), ok and not data.get("is_error")
             except ValueError:
                 ok = False
-    found = found or session
+    # The session ID is for the board, which resumes it later, so it must come from the program, not from
+    # the text the model wrote: a resumed run keeps the session it was given, and an ID that also appears
+    # in the reply is treated as part of the reply.
+    if session:
+        found = session
+    elif found and reply and found in reply:
+        found = None
     line = run_line(mono, proc.returncode, usage_line(usage, proc.stdout + "\n" + proc.stderr), trace)
     if ok and reply:
         write_trace(trace, cmd, cwd, started, mono, proc, "done", stdin)

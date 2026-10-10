@@ -1439,6 +1439,25 @@ class SessionTest(Base):
         self.dispatch({"alpha": agent})
         self.assertEqual((db.get(self.conn, t)["result"], self.session_of(t)[1]), ("hi", "abc-123"))
 
+    def test_a_resumed_run_keeps_the_session_it_was_given(self):
+        first = board.add(self.conn, "first", to="alpha")
+        self.dispatch({"alpha": SESSIONED})
+        session = self.session_of(first)[1]
+        # On resume the program prints another ID, as text an agent could have written. The board keeps its own.
+        steer = [PY, "-c", "import sys; print('session_id: s-steered'); print('continued ' + sys.argv[1])", "{session}"]
+        second = board.add(self.conn, "follow-up", follows=first)
+        self.dispatch({"alpha": dict(SESSIONED, cmd_resume=steer)})
+        self.assertEqual(db.get(self.conn, second)["result"], f"continued {session}")
+        self.assertEqual(self.session_of(second), ("alpha", session))
+
+    def test_an_id_inside_the_reply_is_not_a_session(self):
+        agent = {"cmd": [PY, "-c", "import json; print(json.dumps(dict(result='see \"session_id\": \"abc-123\" above')))"],
+                 "reply": "json:result", "session": r'"session_id":\s*"([^"]+)"'}
+        t = board.add(self.conn, "json", to="alpha")
+        self.dispatch({"alpha": agent})
+        self.assertEqual(db.get(self.conn, t)["result"], 'see "session_id": "abc-123" above')
+        self.assertEqual(self.session_of(t), (None, None))
+
     def test_follow_needs_an_existing_task(self):
         with self.assertRaises(SystemExit):
             with mock.patch.dict(os.environ, {"NEXTRUNNER_DB": self.db_path}), contextlib.redirect_stderr(io.StringIO()):
